@@ -1,0 +1,3 @@
+// Both targets read this. The Apple team ID is not in the repo: it lives in Local.xcconfig, which is
+// untracked (see Local.xcconfig.example), and this line is skipped when that file doesn't exist.
+#include? "Local.xcconfig"
