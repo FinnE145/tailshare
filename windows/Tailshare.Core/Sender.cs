@@ -1,0 +1,209 @@
+using System.Net;
+using System.Net.Http.Json;
+using System.Text;
+
+namespace Tailshare.Core;
+
+/// <summary>What is being sent: some text, or a set of files and folders.</summary>
+public abstract record SendContent
+{
+    public sealed record Text(string Value) : SendContent;
+    public sealed record Paths(IReadOnlyList<string> Items) : SendContent;
+}
+
+public enum SendStage { Preparing, Waiting, Sending }
+
+public sealed record SendProgress(SendStage Stage, long BytesSent, long BytesTotal);
+
+public enum SendOutcome { Sent, Declined, DidntRespond, Failed, Cancelled }
+
+public sealed class Sender : IDisposable
+{
+    private readonly HttpClient _http;
+    private readonly int _port;
+
+    // Settable so tests can use short ones.
+    public TimeSpan OfferTimeout { get; init; } = Protocol.OfferTimeout;
+    public TimeSpan HelloTimeout { get; init; } = Protocol.HelloTimeout;
+
+    public Sender(int port = Protocol.DefaultPort)
+    {
+        _port = port;
+        // Timeouts are per request (below): an upload of any size must not hit a client-wide one.
+        _http = new HttpClient { Timeout = Timeout.InfiniteTimeSpan };
+    }
+
+    public void Dispose() => _http.Dispose();
+
+    private Uri Url(PeerInfo to, string path) => new($"http://{to.Ip}:{_port}{path}");
+
+    /// <summary>The online peers that answer <c>hello</c> as tailshare protocol 1, probed in parallel.</summary>
+    public async Task<IReadOnlyList<PeerInfo>> DiscoverAsync(TailnetStatus status, CancellationToken ct)
+    {
+        var probes = status.Peers.Where(p => p.Online).Select(async p => await IsTailshareAsync(p, ct) ? p : null);
+        var found = await Task.WhenAll(probes);
+        return found.Where(p => p is not null).Select(p => p!).ToList();
+    }
+
+    private async Task<bool> IsTailshareAsync(PeerInfo peer, CancellationToken ct)
+    {
+        using var timeout = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        timeout.CancelAfter(HelloTimeout);
+        try
+        {
+            var hello = await _http.GetFromJsonAsync<HelloResponse>(Url(peer, "/v1/hello"), Protocol.Json, timeout.Token);
+            return hello is { App: Protocol.AppName, Protocol: Protocol.Version };
+        }
+        catch (Exception ex) when (ex is HttpRequestException or OperationCanceledException or System.Text.Json.JsonException or NotSupportedException)
+        {
+            return false;
+        }
+    }
+
+    public async Task<SendOutcome> SendAsync(PeerInfo to, SendContent content, IProgress<SendProgress>? progress, CancellationToken ct)
+    {
+        string? zipPath = null;
+        try
+        {
+            Offer offer;
+            Func<Stream> openBody;
+
+            switch (content)
+            {
+                case SendContent.Text t:
+                    var bytes = Encoding.UTF8.GetBytes(t.Value);
+                    offer = new Offer(OfferKind.Text, null, 1, false, bytes.Length, bytes.Length);
+                    openBody = () => new MemoryStream(bytes, writable: false);
+                    break;
+
+                case SendContent.Paths p:
+                    if (p.Items.Count == 1 && File.Exists(p.Items[0]))
+                    {
+                        var path = p.Items[0];
+                        var size = new FileInfo(path).Length;
+                        offer = new Offer(OfferKind.File, Path.GetFileName(path), 1, false, size, size);
+                        openBody = () => new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
+                    }
+                    else
+                    {
+                        progress?.Report(new SendProgress(SendStage.Preparing, 0, 0));
+                        var zip = zipPath = Path.Combine(Path.GetTempPath(), $"tailshare-{Guid.NewGuid():N}.zip");
+                        var info = await Task.Run(() => Bundles.Create(p.Items, zip, ct), ct);
+                        offer = new Offer(OfferKind.Bundle, info.Name, info.Items, info.IsFolder, new FileInfo(zip).Length, info.TotalSize);
+                        openBody = () => new FileStream(zip, FileMode.Open, FileAccess.Read, FileShare.Read);
+                    }
+                    break;
+
+                default:
+                    return SendOutcome.Failed;
+            }
+
+            progress?.Report(new SendProgress(SendStage.Waiting, 0, offer.Bytes));
+            var token = await OfferAsync(to, offer, ct);
+            if (token.Outcome is not null) return token.Outcome.Value;
+
+            return await UploadAsync(to, token.Token!, offer, openBody, progress, ct);
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            return SendOutcome.Cancelled;
+        }
+        catch (Exception ex) when (ex is HttpRequestException or IOException or UnauthorizedAccessException or InvalidDataException)
+        {
+            return SendOutcome.Failed;
+        }
+        finally
+        {
+            if (zipPath is not null) { try { File.Delete(zipPath); } catch (IOException) { } }
+        }
+    }
+
+    private sealed record OfferResult(string? Token, SendOutcome? Outcome);
+
+    private async Task<OfferResult> OfferAsync(PeerInfo to, Offer offer, CancellationToken ct)
+    {
+        using var timeout = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        timeout.CancelAfter(OfferTimeout);
+
+        HttpResponseMessage response;
+        try
+        {
+            response = await _http.PostAsJsonAsync(Url(to, "/v1/offer"), offer, Protocol.Json, timeout.Token);
+        }
+        catch (OperationCanceledException) when (!ct.IsCancellationRequested)
+        {
+            return new(null, SendOutcome.DidntRespond);
+        }
+
+        using (response)
+        {
+            if (response.StatusCode == HttpStatusCode.OK)
+            {
+                var body = await response.Content.ReadFromJsonAsync<TokenResponse>(Protocol.Json, ct);
+                return string.IsNullOrEmpty(body?.Token) ? new(null, SendOutcome.Failed) : new(body.Token, null);
+            }
+            if (response.StatusCode == HttpStatusCode.Forbidden)
+            {
+                ErrorResponse? error = null;
+                try { error = await response.Content.ReadFromJsonAsync<ErrorResponse>(Protocol.Json, ct); }
+                catch (System.Text.Json.JsonException) { }
+
+                return error?.Error switch
+                {
+                    // A blocked sender learns no more than a declined one.
+                    "declined" or "blocked" => new(null, SendOutcome.Declined),
+                    "timeout" => new(null, SendOutcome.DidntRespond),
+                    _ => new(null, SendOutcome.Failed),
+                };
+            }
+            return new(null, SendOutcome.Failed);
+        }
+    }
+
+    private async Task<SendOutcome> UploadAsync(PeerInfo to, string token, Offer offer, Func<Stream> openBody,
+        IProgress<SendProgress>? progress, CancellationToken ct)
+    {
+        await using var body = openBody();
+        var content = new StreamContent(new ProgressStream(body, n => progress?.Report(new SendProgress(SendStage.Sending, n, offer.Bytes))));
+        content.Headers.ContentLength = offer.Bytes;
+
+        progress?.Report(new SendProgress(SendStage.Sending, 0, offer.Bytes));
+        using var response = await _http.PutAsync(Url(to, "/v1/upload/" + Uri.EscapeDataString(token)), content, ct);
+        return response.IsSuccessStatusCode ? SendOutcome.Sent : SendOutcome.Failed;
+    }
+
+    /// <summary>Reports how much has been read, which is how much has been handed to the network.</summary>
+    private sealed class ProgressStream(Stream inner, Action<long> report) : Stream
+    {
+        private long _read;
+        private long _lastReport = Environment.TickCount64;
+
+        public override async ValueTask<int> ReadAsync(Memory<byte> buffer, CancellationToken ct = default)
+        {
+            var n = await inner.ReadAsync(buffer, ct);
+            _read += n;
+            var now = Environment.TickCount64;
+            if (n == 0 || now - _lastReport > 250)
+            {
+                _lastReport = now;
+                report(_read);
+            }
+            return n;
+        }
+
+        public override Task<int> ReadAsync(byte[] buffer, int offset, int count, CancellationToken ct) =>
+            ReadAsync(buffer.AsMemory(offset, count), ct).AsTask();
+
+        public override int Read(byte[] buffer, int offset, int count) => inner.Read(buffer, offset, count);
+
+        public override bool CanRead => true;
+        public override bool CanSeek => false;
+        public override bool CanWrite => false;
+        public override long Length => throw new NotSupportedException();
+        public override long Position { get => throw new NotSupportedException(); set => throw new NotSupportedException(); }
+        public override void Flush() { }
+        public override long Seek(long offset, SeekOrigin origin) => throw new NotSupportedException();
+        public override void SetLength(long value) => throw new NotSupportedException();
+        public override void Write(byte[] buffer, int offset, int count) => throw new NotSupportedException();
+    }
+}
