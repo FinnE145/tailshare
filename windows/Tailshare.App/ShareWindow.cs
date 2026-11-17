@@ -43,7 +43,8 @@ internal sealed class ShareWindow : Window
         _send.Changed += OnStatus;
         Closed += (_, _) => ReportCompleted();
 
-        WindowHelper.Configure(this, 400, 420, bottomRight: false);
+        // On top: the share sheet hands over to this window and it must not fall behind the app shared from.
+        WindowHelper.Configure(this, 400, 420, bottomRight: false, alwaysOnTop: true);
         _ = LoadAsync();
     }
 

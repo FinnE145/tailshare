@@ -54,6 +54,18 @@ public class ProtocolTests
         Assert.Empty(found);
     }
 
+    [Fact] // spec Discovery: hello must say app "tailshare"; another app speaking "protocol 1" is not listed
+    public async Task Discovery_ignores_another_app()
+    {
+        using var listener = new HttpListenerHost("""{"app":"something-else","protocol":1}""");
+        using var sender = new Sender(listener.Port);
+        var peer = new PeerInfo(new Identity("p1", "other"), IPAddress.Loopback, true);
+
+        var found = await sender.DiscoverAsync(new TailnetStatus(true, null, [peer]), CancellationToken.None);
+
+        Assert.Empty(found);
+    }
+
     // ---- every request is identified by whois
 
     [Fact] // spec Wire protocol: whois failure answers 403 on every endpoint and does nothing more
@@ -306,6 +318,15 @@ public class ProtocolTests
         Assert.Equal(HttpStatusCode.OK, r.StatusCode);
     }
 
+    [Fact] // characterization: an offer body over 64 KB is refused before it is parsed or prompted
+    public async Task Offer_body_over_64_KB_is_400()
+    {
+        await using var rig = await Rig.StartAsync();
+        using var r = await rig.PostOffer(Rig.FileOffer(3, name: new string('a', 70_000)));
+        Assert.Equal(HttpStatusCode.BadRequest, r.StatusCode);
+        Assert.Equal(0, rig.Host.AskCalls);
+    }
+
     [Theory] // spec POST /v1/offer: malformed offer -> 400
     [InlineData("not json")]
     [InlineData("{}")]
@@ -517,6 +538,10 @@ public class ProtocolTests
         Assert.Equal(Path.Combine(rig.Downloads, "photo.bin"), landed);
         Assert.Equal(content, File.ReadAllBytes(landed));
         Assert.Equal([landed], rig.EverythingInDownloads());
+        // The temp file is hidden; the received file must not be (Verify found it was).
+        Assert.False(File.GetAttributes(landed).HasFlag(FileAttributes.Hidden));
+        // The last progress report is the whole file, so a progress bar ends full.
+        Assert.Equal(300_000, Assert.Single(rig.Host.Incoming).LastProgress);
     }
 
     [Fact] // spec Receiving/Names: a taken file name gets a suffix, the old file is untouched

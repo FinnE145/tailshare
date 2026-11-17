@@ -135,6 +135,34 @@ public class SettingsTests
         Assert.Equal(content, File.ReadAllText(path));
     }
 
+    [Fact] // spec Settings file: a file that can't be read is treated as malformed, so it is never overwritten
+    public void Unreadable_file_is_malformed_and_not_written()
+    {
+        using var dir = new TempDir();
+        var path = dir.Combine("settings.json");
+        File.WriteAllText(path, """{"trusted":[]}""");
+        var store = new SettingsStore(path);
+
+        using (new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.None))
+        {
+            Assert.True(store.Load().Malformed);
+            Assert.False(store.AddTrusted(new Identity("n1", "a")));
+        }
+        Assert.Equal("""{"trusted":[]}""", File.ReadAllText(path));
+    }
+
+    [Fact] // spec Settings file: the written file has the documented fields only (no computed ones)
+    public void Written_file_has_only_the_documented_fields()
+    {
+        using var dir = new TempDir();
+        var store = new SettingsStore(dir.Combine("settings.json"));
+        store.AddTrusted(new Identity("n1", "a"));
+
+        using var doc = System.Text.Json.JsonDocument.Parse(File.ReadAllText(store.FilePath));
+        var names = doc.RootElement.EnumerateObject().Select(p => p.Name).OrderBy(n => n, StringComparer.Ordinal);
+        Assert.Equal(["blocked", "port", "receiveFolder", "trusted"], names);
+    }
+
     [Fact] // spec Settings file: read fresh, so a hand edit applies at once
     public void Load_sees_a_hand_edit_without_a_new_store()
     {
@@ -155,7 +183,9 @@ public class TailscaleJsonTests
           "Peer": {
             "nodekey:aaa": { "ID": "p1", "DNSName": "peer-one.example.ts.net.", "TailscaleIPs": ["100.64.0.2", "fd7a:115c::2"], "Online": true },
             "nodekey:bbb": { "ID": "p2", "DNSName": "peer-two.example.ts.net.", "TailscaleIPs": ["100.64.0.3"], "Online": false },
-            "nodekey:ccc": { "ID": "p3", "DNSName": "v6-only.example.ts.net.", "TailscaleIPs": ["fd7a:115c::4"], "Online": true }
+            "nodekey:ccc": { "ID": "p3", "DNSName": "v6-only.example.ts.net.", "TailscaleIPs": ["fd7a:115c::4"], "Online": true },
+            "nodekey:ddd": { "ID": "p4", "TailscaleIPs": ["100.64.0.5"], "Online": true },
+            "nodekey:eee": { "DNSName": "no-id.example.ts.net.", "TailscaleIPs": ["100.64.0.6"], "Online": true }
           } }
         """;
 

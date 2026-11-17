@@ -171,7 +171,9 @@ internal sealed class Notifier(DispatcherQueue ui) : IReceiverHost
         private readonly string _id = NewId();
         private readonly long _total;
         private readonly CancellationTokenSource _cts = new();
-        private uint _sequence;
+        // Starts at 1: AppNotificationProgressData(0) throws "The parameter is incorrect", which
+        // failed every transfer over 20 MB with a 500 before a byte was read (found in Verify).
+        private uint _sequence = 1;
 
         public ProgressTransfer(Notifier owner, Identity from, Offer offer)
         {
@@ -186,7 +188,7 @@ internal sealed class Notifier(DispatcherQueue ui) : IReceiverHost
                 .BuildNotification();
             notification.Tag = _id;
             notification.Group = "progress";
-            notification.Progress = new AppNotificationProgressData(0) { Value = 0, ValueStringOverride = "0 B", Status = "Receiving" };
+            notification.Progress = new AppNotificationProgressData(_sequence) { Value = 0, ValueStringOverride = "0 B", Status = "Receiving" };
             AppNotificationManager.Default.Show(notification);
         }
 

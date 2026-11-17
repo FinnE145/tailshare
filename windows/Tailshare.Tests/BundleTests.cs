@@ -40,6 +40,8 @@ public class BundleTests
     [InlineData("Photos\\..\\evil.txt")]
     [InlineData("Photos//a.txt")]
     [InlineData("./a.txt")]
+    [InlineData("Photos/a\u0001b.txt")]
+    [InlineData("Photos/a\u007Fb.txt")]
     public void Bad_entry_fails_the_transfer_and_leaves_nothing(string badName)
     {
         var (dir, folder) = Setup();
@@ -125,6 +127,30 @@ public class BundleTests
         Assert.Throws<InvalidDataException>(() => Bundles.Extract(zip, folder, 1000));
 
         Assert.Empty(Directory.GetFileSystemEntries(folder));
+    }
+
+    [Fact] // characterization: a zip with no entries fails (the app's received notification needs at least one path)
+    public void Empty_bundle_fails()
+    {
+        var (dir, folder) = Setup();
+        using var _ = dir;
+        var zip = MakeZip(dir);
+
+        Assert.Throws<InvalidDataException>(() => Bundles.Extract(zip, folder, 1000));
+        Assert.Empty(Directory.GetFileSystemEntries(folder));
+    }
+
+    [Fact] // spec Bundles: a folder as "Photos/…"; an empty folder is only its directory entry and still lands as a folder
+    public void Empty_folder_alone_lands_as_a_folder()
+    {
+        var (dir, folder) = Setup();
+        using var _ = dir;
+        var zip = MakeZip(dir, ("Empty/", ""));
+
+        var placed = Bundles.Extract(zip, folder, 0);
+
+        Assert.Equal([Path.Combine(folder, "Empty")], placed);
+        Assert.True(Directory.Exists(Path.Combine(folder, "Empty")));
     }
 
     [Fact] // spec Receiving/Finishing: a file that is not a zip fails the transfer, nothing left

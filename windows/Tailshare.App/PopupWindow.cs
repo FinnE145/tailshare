@@ -111,8 +111,7 @@ internal sealed class PopupWindow : Window
 
     public void ShowAndRefresh()
     {
-        AppWindow.Show();
-        Activate();
+        WindowHelper.BringToFront(this);
         _ = _devices.RefreshAsync();
     }
 

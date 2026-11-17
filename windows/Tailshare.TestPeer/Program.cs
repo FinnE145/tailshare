@@ -90,6 +90,10 @@ async Task<int> Listen(string[] a)
     Console.WriteLine($"listening on port {port}, into {Path.GetFullPath(into)} ({mode}); Ctrl+C to stop");
     var stop = new TaskCompletionSource();
     Console.CancelKeyPress += (_, e) => { e.Cancel = true; stop.TrySetResult(); };
+    // Kestrel's console lifetime takes SIGTERM, so `kill <pid>` did nothing; and a background job
+    // started by a non-interactive shell ignores SIGINT. Stop on SIGTERM too.
+    using var term = System.Runtime.InteropServices.PosixSignalRegistration.Create(
+        System.Runtime.InteropServices.PosixSignal.SIGTERM, ctx => { ctx.Cancel = true; stop.TrySetResult(); });
     await stop.Task;
     return 0;
 }

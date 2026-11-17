@@ -14,6 +14,8 @@ public class LinkDetectorTests
     [Theory] // spec Receiving/Notifications: text containing a URL, and other schemes, are text
     [InlineData("see https://example.com")]
     [InlineData("https://example.com and more")]
+    // Uri.TryCreate accepts this one (it escapes the space), so only the whitespace check rejects it.
+    [InlineData("https://example.com/a b")]
     [InlineData("file:///C:/Windows/system32/calc.exe")]
     [InlineData("javascript:alert(1)")]
     [InlineData("ftp://example.com")]
