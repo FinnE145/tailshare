@@ -1,4 +1,5 @@
 import Foundation
+import os
 
 public struct PeerInfo: Equatable, Sendable {
     public var identity: Identity
@@ -57,6 +58,18 @@ public enum TailscaleJSON {
         return TailnetStatus(connected: true, selfIP: selfIP, peers: peers)
     }
 
+    /// The shape of a status answer for the log: the backend state, which top-level and `Self` keys exist, and how many
+    /// addresses `Self` lists. Never a name or an address.
+    public static func describe(_ data: Data) -> String {
+        // Text that is not JSON is the CLI talking about itself (an error message), never device data, so it is quoted.
+        guard let root = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] else {
+            return "not JSON, \(data.count) bytes: \(String(decoding: data.prefix(200), as: UTF8.self))"
+        }
+        let me = root["Self"] as? [String: Any]
+        let ips = (me?["TailscaleIPs"] as? [String])?.count
+        return "BackendState=\(root["BackendState"] as? String ?? "none") keys=\(root.keys.sorted()) selfKeys=\(me?.keys.sorted() ?? []) selfIPs=\(ips.map(String.init) ?? "none")"
+    }
+
     public static func parseWhois(_ data: Data) -> Identity? {
         guard let root = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any],
               let node = root["Node"] as? [String: Any],
@@ -94,6 +107,9 @@ public struct CLITailscale: Tailscale {
     ]
 
     private static let callTimeout: TimeInterval = 5
+    // Why a call failed goes to the system log (`log show --predicate 'subsystem == "io.github.finne145.tailshare"'`):
+    // from the outside "Tailscale not connected" looks the same for every cause. Never the output itself, which names devices.
+    private static let log = Logger(subsystem: "io.github.finne145.tailshare", category: "tailscale")
 
     private let candidates: [String]
     private let exists: @Sendable (String) -> Bool
@@ -111,7 +127,9 @@ public struct CLITailscale: Tailscale {
 
     public func status() async -> TailnetStatus {
         guard let out = await run(["status", "--json"]) else { return .disconnected }
-        return TailscaleJSON.parseStatus(out)
+        let status = TailscaleJSON.parseStatus(out)
+        if !status.connected { Self.log.error("status answered, but not a running tailnet with an IPv4 address: \(TailscaleJSON.describe(out), privacy: .public)") }
+        return status
     }
 
     public func whois(ip: String) async -> Identity? {
@@ -130,19 +148,36 @@ public struct CLITailscale: Tailscale {
                 let process = Process()
                 process.executableURL = URL(fileURLWithPath: exe)
                 process.arguments = args
+                // The macOS app and its CLI are one binary, and which one it acts as is guessed from how it was
+                // started. Launched from the GUI (Launchpad, Spotlight) it guessed "GUI" for a child of ours and
+                // answered "The Tailscale GUI failed to start". Tailscale's own /usr/local/bin/tailscale wrapper
+                // sets this variable for the same reason.
+                process.environment = ProcessInfo.processInfo.environment.merging(["TAILSCALE_BE_CLI": "1"]) { _, new in new }
                 let out = Pipe()
+                let err = Pipe()
                 process.standardOutput = out
-                process.standardError = FileHandle.nullDevice
+                process.standardError = err
                 process.standardInput = FileHandle.nullDevice
 
-                do { try process.run() } catch { continuation.resume(returning: nil); return }
+                do { try process.run() } catch {
+                    Self.log.error("could not start \(args[0], privacy: .public): \(error.localizedDescription, privacy: .public)")
+                    continuation.resume(returning: nil)
+                    return
+                }
 
                 let killer = DispatchWorkItem { if process.isRunning { process.terminate() } }
                 DispatchQueue.global().asyncAfter(deadline: .now() + Self.callTimeout, execute: killer)
 
                 let data = out.fileHandleForReading.readDataToEndOfFile()
+                let stderr = err.fileHandleForReading.readDataToEndOfFile()
                 process.waitUntilExit()
                 killer.cancel()
+
+                if process.terminationStatus != 0 {
+                    // The first line of what the CLI said about itself ("Failed to load preferences" and the like), capped.
+                    let said = String(decoding: stderr.prefix(160), as: UTF8.self).split(separator: "\n").first.map(String.init) ?? ""
+                    Self.log.error("\(args[0], privacy: .public) exited \(process.terminationStatus): \(said, privacy: .public)")
+                }
                 continuation.resume(returning: process.terminationStatus == 0 ? data : nil)
             }
         }

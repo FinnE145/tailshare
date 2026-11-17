@@ -177,6 +177,25 @@ final class TailscaleTests: XCTestCase {
         XCTAssertNil(who)
     }
 
+    // spec B Tailscale on the Mac (found on the first real run): the CLI is started with TAILSCALE_BE_CLI=1, without which the
+    // macOS binary may act as the GUI and answer with a message instead of JSON. The fake answers only when the variable is set.
+    func testCLIIsStartedInCLIMode() async throws {
+        let dir = try makeTempDir()
+        addTeardownBlock { try? FileManager.default.removeItem(at: dir) }
+        let script = dir.appendingPathComponent("fake-tailscale")
+        let body = """
+        #!/bin/sh
+        if [ "$TAILSCALE_BE_CLI" != "1" ]; then echo "The Tailscale GUI failed to start"; exit 0; fi
+        echo '{"BackendState": "Running", "Self": {"TailscaleIPs": ["100.64.0.1"]}, "Peer": {}}'
+        """
+        try body.write(to: script, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: script.path)
+
+        let status = await CLITailscale(candidates: [script.path]).status()
+        XCTAssertTrue(status.connected)
+        XCTAssertEqual(status.selfIP, "100.64.0.1")
+    }
+
     // spec B Security checklist: whois is only ever run on a tailnet address, never on something a peer chose.
     // The fake CLI answers any whois with a valid identity, so only the address check can make the result nil.
     func testWhoisRefusesNonTailnetAddresses() async throws {

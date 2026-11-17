@@ -62,8 +62,14 @@ final class AppModel: ObservableObject {
         Task { await refreshDevices() }
         // Every 10 seconds: noticing Tailscale going down or coming back, a changed address, an edited port.
         timer = Timer.scheduledTimer(withTimeInterval: 10, repeats: true) { [weak self] _ in
-            Task { @MainActor in _ = await self?.node.refresh() }
+            Task { @MainActor in await self?.tick() }
         }
+    }
+
+    // Tailscale coming back, or going away, shows in the device list without the popup being reopened.
+    private func tick() async {
+        let status = await node.refresh()
+        if status.connected == (deviceState == .tailscaleDown) { await refreshDevices(force: true) }
     }
 
     private func nodeChanged(_ state: NodeState) {
