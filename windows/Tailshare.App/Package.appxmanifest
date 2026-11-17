@@ -1,0 +1,88 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Package
+  xmlns="http://schemas.microsoft.com/appx/manifest/foundation/windows10"
+  xmlns:uap="http://schemas.microsoft.com/appx/manifest/uap/windows10"
+  xmlns:uap5="http://schemas.microsoft.com/appx/manifest/uap/windows10/5"
+  xmlns:rescap="http://schemas.microsoft.com/appx/manifest/foundation/windows10/restrictedcapabilities"
+  xmlns:desktop="http://schemas.microsoft.com/appx/manifest/desktop/windows10"
+  xmlns:desktop2="http://schemas.microsoft.com/appx/manifest/desktop/windows10/2"
+  xmlns:com="http://schemas.microsoft.com/appx/manifest/com/windows10"
+  IgnorableNamespaces="uap uap5 rescap desktop desktop2 com">
+
+  <!-- Publisher must equal the subject of the signing certificate (see CLAUDE.md's Commands). -->
+  <Identity Name="Tailshare.App" Publisher="CN=Tailshare Dev" Version="1.0.0.0" />
+
+  <Properties>
+    <DisplayName>tailshare</DisplayName>
+    <PublisherDisplayName>tailshare</PublisherDisplayName>
+    <Logo>Assets\StoreLogo.png</Logo>
+  </Properties>
+
+  <Dependencies>
+    <TargetDeviceFamily Name="Windows.Universal" MinVersion="10.0.17763.0" MaxVersionTested="10.0.19041.0" />
+    <TargetDeviceFamily Name="Windows.Desktop" MinVersion="10.0.17763.0" MaxVersionTested="10.0.19041.0" />
+  </Dependencies>
+
+  <Resources>
+    <Resource Language="x-generate" />
+  </Resources>
+
+  <Applications>
+    <Application Id="App" Executable="$targetnametoken$.exe" EntryPoint="$targetentrypoint$">
+      <uap:VisualElements
+        DisplayName="tailshare"
+        Description="Share files and text between devices over Tailscale"
+        BackgroundColor="transparent"
+        Square150x150Logo="Assets\Square150x150Logo.png"
+        Square44x44Logo="Assets\Square44x44Logo.png">
+      </uap:VisualElements>
+
+      <Extensions>
+        <!-- Launch at login. Disabled until the app asks for it on first run; the user can turn it off in Startup apps. -->
+        <uap5:Extension Category="windows.startupTask" Executable="Tailshare.App.exe" EntryPoint="Windows.FullTrustApplication">
+          <uap5:StartupTask TaskId="TailshareStartup" Enabled="false" DisplayName="tailshare" />
+        </uap5:Extension>
+
+        <!-- Without these two, AppNotificationManager.Register fails with "No COM servers are registered for this app". -->
+        <desktop:Extension Category="windows.toastNotificationActivation">
+          <desktop:ToastNotificationActivation ToastActivatorCLSID="dd99386b-0bbc-49bc-8824-6b005f683635" />
+        </desktop:Extension>
+        <com:Extension Category="windows.comServer">
+          <com:ComServer>
+            <com:ExeServer Executable="Tailshare.App.exe" Arguments="----AppNotificationActivated:" DisplayName="tailshare notifications">
+              <com:Class Id="dd99386b-0bbc-49bc-8824-6b005f683635" DisplayName="tailshare notifications" />
+            </com:ExeServer>
+          </com:ComServer>
+        </com:Extension>
+
+        <!-- Windows share sheet: text, web links and files (which may include folders). -->
+        <uap:Extension Category="windows.shareTarget">
+          <uap:ShareTarget Description="Send with tailshare">
+            <uap:SupportedFileTypes>
+              <uap:SupportsAnyFileType />
+            </uap:SupportedFileTypes>
+            <uap:DataFormat>Text</uap:DataFormat>
+            <uap:DataFormat>URI</uap:DataFormat>
+            <uap:DataFormat>StorageItems</uap:DataFormat>
+          </uap:ShareTarget>
+        </uap:Extension>
+      </Extensions>
+    </Application>
+  </Applications>
+
+  <Capabilities>
+    <rescap:Capability Name="runFullTrust" />
+    <Capability Name="internetClient" />
+    <Capability Name="privateNetworkClientServer" />
+  </Capabilities>
+
+  <!-- Package-level, not under the Application. Inbound TCP 45611, the default port every peer connects to.
+       A different "port" in settings.json needs its own firewall rule. -->
+  <Extensions>
+    <desktop2:Extension Category="windows.firewallRules">
+      <desktop2:FirewallRules Executable="Tailshare.App.exe">
+        <desktop2:Rule Direction="in" IPProtocol="TCP" LocalPortMin="45611" LocalPortMax="45611" Profile="all" />
+      </desktop2:FirewallRules>
+    </desktop2:Extension>
+  </Extensions>
+</Package>
