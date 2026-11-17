@@ -8,4 +8,5 @@ Each note goes under a dated heading saying where it came from (the step and pha
 
 ## 2026-11-16 — setup
 - **`two-checkouts` assumes the other machine is reachable over SSH** for the letter check (`ssh <machine> 'cd … && git branch'`). Here the other checkout is a personal Mac with no SSH set up, so the Git Workflow asks Finn for `git branch` instead. Proposed home: `modules/two-checkouts/MODULE.md`, offering both forms.
+- **`laptop`'s Smart App Control bullet is stale.** On 2026-11-16 the policy read Off (`VerifiedAndReputablePolicyState` = 0) and a locally built .NET exe ran; Finn had this repo's copy rewritten to say so. Proposed home: `modules/laptop/MODULE.md`.
 - **`frontend`'s thousands-separator bullet assumes server-rendered pages updated live.** It was left out here (native desktop UI, nothing server-rendered). Proposed home: `modules/frontend/MODULE.md`, marking that bullet as web-only.

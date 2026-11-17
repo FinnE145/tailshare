@@ -14,6 +14,7 @@ What each spec in `docs/specs/` actually covers, and the code it's authoritative
 
 | spec | scope | primary code | step |
 |---|---|---|---|
+| `docs/specs/windows-app-A.md` | Wire protocol v1, the Windows app, the test peer | `windows/` | A |
 
 ---
 
@@ -26,12 +27,32 @@ Measurements a later session should trust rather than re-derive — each under a
 ## Order
 
 ```
-(no steps yet)
+A (protocol + Windows app) -> B (Mac app)
 ```
 
 **Nothing has landed yet.** <!-- Verify keeps this line current: "A, B and C have landed — …" -->
 
-Reasoning about the order — dependencies, what gates what, what can be picked up on a day something else is blocked — goes here, below the diagram.
+B builds against A's wire protocol, which A's spec defines and A's test peer exercises, so A comes first.
+
+---
+
+## A — Wire protocol and Windows app
+
+**Specced → `docs/specs/windows-app-A.md`** (planning; not landed).
+
+The wire protocol every tailshare app speaks, the Windows tray app (share target, popup, notifications, first-contact trust), and a headless test peer for verifying against a second device before the Mac app exists.
+
+## B — Mac app
+
+**Not specced.** Own `/flow plan` session, on the Mac (`mac/` is the Mac checkout's).
+
+A menu-bar app plus a Share Extension with the same behaviour as A's Windows app: register in the share sheet, send text or files to a tailshare device, receive into the receive folder (Downloads by default), notify on receive (click opens the folder for files, copies text, opens links with a Copy action), and ask before trusting a new device. It implements A's wire protocol v1 as written in A's spec, and the settings file's shape.
+
+Known going in:
+- The minimum macOS is bounded by Finn's own Mac (a couple of versions behind), not the target Mac, which is brand new. SwiftUI's `MenuBarExtra` needs macOS 13 or later.
+- A Share Extension is always sandboxed; it likely hands the send to the main app (an app group) rather than doing network I/O itself.
+- The Mac's Tailscale CLI location depends on which Tailscale build is installed (App Store or standalone); `tailscale status`/`whois` are what A uses.
+- The protocol's offer-then-upload shape was chosen partly so a plain `URLSession` client works (no `Expect: 100-continue`).
 
 ---
 
