@@ -1,0 +1,6 @@
+{
+  "template": "00fc320",
+  "mode": "full",
+  "modules": ["frontend", "laptop", "dev-server", "two-checkouts"],
+  "updated": "2026-11-16"
+}

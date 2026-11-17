@@ -1,0 +1,29 @@
+# .NET / Visual Studio
+bin/
+obj/
+.vs/
+*.user
+*.suo
+AppPackages/
+BundleArtifacts/
+TestResults/
+
+# Xcode
+xcuserdata/
+DerivedData/
+build/
+*.xcuserstate
+
+# Signing material never goes in this public repo
+*.pfx
+*.p12
+*.cer
+*.mobileprovision
+*.provisionprofile
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Claude Code per-machine settings
+.claude/settings.local.json
