@@ -108,7 +108,10 @@ public sealed class Sender : IDisposable
         {
             return SendOutcome.Cancelled;
         }
-        catch (Exception ex) when (ex is HttpRequestException or IOException or UnauthorizedAccessException or InvalidDataException)
+        // JsonException and NotSupportedException: a peer that answers 200 with a body that isn't the
+        // expected JSON. Uncaught, they escaped into the app's click handler and would end the process.
+        catch (Exception ex) when (ex is HttpRequestException or IOException or UnauthorizedAccessException or InvalidDataException
+            or System.Text.Json.JsonException or NotSupportedException)
         {
             return SendOutcome.Failed;
         }

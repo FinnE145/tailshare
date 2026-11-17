@@ -206,6 +206,19 @@ public class ProtocolTests
         Assert.False(rig.Settings.Load().Value.IsTrusted(Sender.Id));
     }
 
+    [Fact] // spec POST /v1/offer: the request stays open only until answered or the timeout, even if the host never answers
+    public async Task Prompt_times_out_even_when_the_host_ignores_cancellation()
+    {
+        await using var rig = await Rig.StartAsync(promptTimeout: TimeSpan.FromMilliseconds(150));
+        rig.Host.Ask = (_, _, _) => new TaskCompletionSource<bool>().Task;
+
+        using var r = await rig.PostOffer(Rig.FileOffer(3));
+
+        Assert.Equal(HttpStatusCode.Forbidden, r.StatusCode);
+        Assert.Equal("""{"error":"timeout"}""", await r.Content.ReadAsStringAsync());
+        Assert.False(rig.Settings.Load().Value.IsTrusted(Sender.Id));
+    }
+
     [Fact] // spec POST /v1/offer: the sender sees "timeout" as DidntRespond
     public async Task Sender_reports_a_prompt_timeout_as_didnt_respond()
     {
@@ -247,6 +260,16 @@ public class ProtocolTests
         closed.Stop();
         using var sender = new Sender(port);
         var peer = new PeerInfo(new Identity("p", "gone"), IPAddress.Loopback, true);
+
+        Assert.Equal(SendOutcome.Failed, await sender.SendAsync(peer, new SendContent.Text("x"), null, CancellationToken.None));
+    }
+
+    [Fact] // spec Sending: a peer whose answer isn't the protocol's JSON is Failed, not an exception
+    public async Task Peer_answering_an_offer_with_non_json_is_failed()
+    {
+        using var listener = new HttpListenerHost("not json");
+        using var sender = new Sender(listener.Port);
+        var peer = new PeerInfo(new Identity("p", "odd"), IPAddress.Loopback, true);
 
         Assert.Equal(SendOutcome.Failed, await sender.SendAsync(peer, new SendContent.Text("x"), null, CancellationToken.None));
     }

@@ -175,7 +175,9 @@ public sealed class Receiver : IAsyncDisposable
             prompt.CancelAfter(_o.PromptTimeout);
 
             bool accepted;
-            try { accepted = await _o.Host.AskFirstContactAsync(who, offer, prompt.Token); }
+            // WaitAsync: the timeout must hold even for a host that ignores the token (the test
+            // peer's --ask blocks on stdin and would otherwise keep the request open for good).
+            try { accepted = await _o.Host.AskFirstContactAsync(who, offer, prompt.Token).WaitAsync(prompt.Token); }
             catch (OperationCanceledException) { accepted = false; }
 
             // A sender that hung up is cancelled too and gets this answer; nobody is there to read it.

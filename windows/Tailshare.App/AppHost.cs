@@ -49,6 +49,9 @@ internal sealed class AppHost
 
     public void Start(AppActivationArguments? first)
     {
+        // Before anything can show a notification. Verify found this was never called: no click,
+        // Accept or Decline reached the app, so every first contact would have timed out.
+        Notifier.Register();
         CreateTray();
         _ = PollForeverAsync();
         _ = RequestStartupOnceAsync();
