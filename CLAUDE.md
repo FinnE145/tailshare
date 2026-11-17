@@ -6,7 +6,7 @@ A Windows app and a Mac app that register in each OS's share sheet and live in t
 ## Tech Stack
 - **Windows app:** C# on .NET 10 (SDK 10.0.404), WinUI 3 on Windows App SDK **1.8.260921001**, tray icon by **H.NotifyIcon.WinUI 2.4.1**, receiver on ASP.NET Core Kestrel (the shared framework, no package), windows built in code (the only XAML file is `App.xaml`). Packaged as MSIX, self-contained: Windows only offers packaged apps (package identity) as share targets.
 - **Mac app:** Swift and SwiftUI, a menu-bar app plus a Share Extension, built in Xcode on the Mac. Swift/Xcode versions and the minimum macOS are recorded in `mac/CLAUDE.md` from the Mac; the minimum is bounded by my own Mac, which is a couple of versions behind, not the target Mac.
-- **Network:** Tailscale (1.104.5 on the laptop). Peers come from the local Tailscale install; transfers go directly between devices over the tailnet on port 45611. The wire protocol is defined by roadmap step A's spec, and both apps must match it.
+- **Network:** Tailscale (1.104.5 on the laptop, App Store build 1.104.2 on the Mac). Peers come from the local Tailscale install; transfers go directly between devices over the tailnet on port 45611. The wire protocol is defined by roadmap step A's spec, and both apps must match it.
 - **Tests:** xUnit (`dotnet test`) on Windows, XCTest (`xcodebuild test`) on the Mac.
 - **Storage:** none beyond each app's own settings; received files go to the user's Downloads folder.
 - Fill in remaining choices as features are specced. Never assume an unstated version or library.

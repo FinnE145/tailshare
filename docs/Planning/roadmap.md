@@ -15,12 +15,17 @@ What each spec in `docs/specs/` actually covers, and the code it's authoritative
 | spec | scope | primary code | step |
 |---|---|---|---|
 | `docs/specs/windows-app-A.md` | Wire protocol v1, the Windows app, the test peer | `windows/` | A |
+| `docs/specs/mac-app-B.md` | The Mac menu-bar app and Share Extension (protocol v1 from A) | `mac/` | B |
 
 ---
 
 ## Verified facts
 
 Measurements a later session should trust rather than re-derive — each under a dated subsection. Don't trust a number that contradicts one of these without re-measuring it deliberately.
+
+### 2026-11-16 — Finn's Mac
+- macOS 14.8.7 on a MacBook Pro (M1). Only the Command Line Tools were installed (Swift 6.0.3); the newest Xcode for macOS 14 is 16.2.
+- Tailscale is the App Store build, 1.104.2. `/Applications/Tailscale.app/Contents/MacOS/Tailscale status --json` works without admin (`/usr/local/bin/tailscale` is a wrapper script for it). Port 45611 was free.
 
 ---
 
@@ -44,7 +49,7 @@ The wire protocol every tailshare app speaks, the Windows tray app (share target
 
 ## B — Mac app
 
-**Not specced.** Own `/flow plan` session, on the Mac (`mac/` is the Mac checkout's).
+**Specced → `docs/specs/mac-app-B.md`** (planning; not landed). Implemented and verified on the Mac (`mac/` is the Mac checkout's).
 
 A menu-bar app plus a Share Extension with the same behaviour as A's Windows app: register in the share sheet, send text or files to a tailshare device, receive into the receive folder (Downloads by default), notify on receive (click opens the folder for files, copies text, opens links with a Copy action), and ask before trusting a new device. It implements A's wire protocol v1 as written in A's spec, and the settings file's shape.
 

@@ -4,12 +4,14 @@ The root `CLAUDE.md` applies here too, except its *Commands* and *Laptop (Window
 
 ## Stack versions
 Record these from this Mac the first time a session runs here; never assume them.
-- **Xcode / Swift:** TBD
-- **Minimum macOS:** TBD — bounded by my own Mac (a couple of versions behind), not the target Mac, which is brand new.
+- **Xcode / Swift:** Xcode 16.2 (build 16C5032a, installed 2026-11-16); Swift 6.0.3.
+- **Minimum macOS:** 14 — my own Mac is on macOS 14.8.7 (2026-11-16); the target Mac is brand new.
+- **Signing:** a free Apple ID (Personal Team), no paid account, so no notarization (spec B).
+- **Tailscale:** App Store build 1.104.2 on this Mac (2026-11-16).
 
 ## Commands
 - **Run:** none yet — record it here verbatim once the Xcode project exists.
-- **Dev port:** 47821, with the same rule as the root *Commands*: it's the port every peer connects to, so if it's occupied, **stop and ask me to free it**; never reassign it.
+- **Dev port:** 45611 (the default; `port` in the settings file overrides it, but the dev loop uses the default), with the same rule as the root *Commands*: it's the port every peer connects to, so if it's occupied, **stop and ask me to free it**; never reassign it.
 - **Test:** none yet — XCTest via `xcodebuild test` once the Xcode project exists; record it here verbatim then.
 - **Stray processes:** a session stops what it started, by PID, never `pkill -f`.
 
