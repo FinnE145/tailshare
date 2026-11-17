@@ -32,17 +32,25 @@ Measurements a later session should trust rather than re-derive — each under a
 - Windows' notification centre shows a progress notification's **Cancel** button only once the notification is expanded.
 - `AppNotificationProgressData(0)` throws "The parameter is incorrect": progress sequence numbers start at 1.
 
+### 2026-11-17 — the Mac app's first real run
+- macOS App Transport Security refuses plain `http://` inside an app bundle even to a tailnet IP address (error `-1022` on every request); unit tests outside a bundle never see it. The app carries `NSAllowsArbitraryLoads` for this reason.
+- The Tailscale App Store binary is both the GUI and the CLI and guesses which from how it was started. Run from the Mac app when it was launched from Launchpad or Spotlight (not from Terminal) it exited 0 and printed "The Tailscale GUI failed to start" instead of JSON. `TAILSCALE_BE_CLI=1` forces CLI mode.
+- A Mac Release build with `xcodebuild` took 1 min 23 s on a first build and 16 s to 26 s after small changes; the 95-test Core suite runs in about 4 s.
+
 ---
 
 ## Order
 
 ```
 A (protocol + Windows app) -> B (Mac app)
+C (visual identity and assets) -> D (Windows UI restyle)
 ```
 
 **A has landed** — wire protocol v1, the Windows app and the test peer. <!-- Verify keeps this line current: "A, B and C have landed — …" -->
 
 B builds against A's wire protocol, which A's spec defines and A's test peer exercises, so A comes first.
+
+C and D follow A and B. D takes its colour and icons from C, so C comes first; neither touches the wire protocol.
 
 ---
 
@@ -64,6 +72,35 @@ Known going in:
 - A Share Extension is always sandboxed; it likely hands the send to the main app (an app group) rather than doing network I/O itself.
 - The Mac's Tailscale CLI location depends on which Tailscale build is installed (App Store or standalone); `tailscale status`/`whois` are what A uses.
 - The protocol's offer-then-upload shape was chosen partly so a plain `URLSession` client works (no `Expect: 100-continue`).
+
+## C — Visual identity and assets
+
+**Not specced.** Own `/flow plan` session.
+
+Decide what tailshare looks like, once, so both apps share it: an accent colour, and a few simple icons or logos: the app icon (the Mac app has none yet, so it shows the generic one; the Windows package ships three logo PNGs in `windows/Tailshare.App/Assets/`, which the plan session should check for being the template's placeholders), the tray and menu-bar icon, and whatever the share sheets show for the app.
+
+Decisions already made, or constraints that come with the work:
+- Simple, not fancy or over-designed (Finn, 2026-11-16): a personal tool.
+- **Finn is red-green colourblind (deuteranomaly):** the accent and any status colours must separate on blue/orange or on lightness, never rely on red vs green (the root `CLAUDE.md` Frontend rules).
+- The Mac menu-bar icon should be a template image (one shape, the system tints it): today it is the SF Symbols `paperplane` and, while receiving, `arrow.down.circle`, two different shapes rather than two colours. A new icon keeps that property, in both its states.
+- The repo is public: the assets are made by Finn or licensed to be here, and nothing in them is personal.
+- Where the source files and the exported sizes live (one place both apps read from, or each app's own folder) is for the plan session to settle.
+
+Output: a spec with the colour values, the icon set and where each file goes, plus the assets themselves committed. Applying them to the apps is D (Windows) and a small follow-up on the Mac.
+
+## D — Windows UI restyle
+
+**Not specced.** Own `/flow plan` session, after C.
+
+Bring the Windows app's windows up to the Mac app's standard (Finn, 2026-11-17: the plain WinUI defaults came out ugly and hard to understand, and B's UI is the one he likes): tasteful and easy to use, native controls laid out with care, still not fancy and nothing custom-drawn.
+
+What B's UI does, as the reference (read `docs/specs/mac-app-B.md`, *Where the implementation departed*, and `mac/Tailshare/`): a device list with rows that show the selection with a checkmark, a **Files** / **Text** switch, a drop zone and a removable list of picked items, one prominent `Send to <device>` button, a status line with an icon and a progress bar, a first-contact window with the device name and what it wants to send, and a send window for the share sheet that lists what is being sent. Windows keeps its own conventions where they differ (tray icon, Windows notifications, its share target).
+
+Known going in:
+- The windows are built in code and the only XAML file is `App.xaml` (A's departures list says why); the restyle works within that.
+- Meaning never rides on colour alone, and the copy stays terse and plain (root `CLAUDE.md`, *Frontend*).
+- Updating A's spec and the root *Frontend* wording to match is part of the step; the root line already carries the 2026-11-16 note.
+- Lessons from B's testing that may apply: a scroll view inside a window that sizes itself to its content has no height of its own, and a popup that closes on focus loss can't accept a file dragged in from another window.
 
 ---
 
