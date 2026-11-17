@@ -91,12 +91,14 @@ private struct SendWindowView: View {
                 } else if let text {
                     ItemRow(name: text.split(whereSeparator: \.isNewline).first.map(String.init) ?? text, symbol: "text.alignleft")
                 } else {
+                    // A scroll view has no height of its own in a window that sizes itself to its content, so it
+                    // is given one by row count (rows plus the gaps between them), and scrolls only past four.
                     ScrollView {
-                        VStack(spacing: 4) {
+                        VStack(spacing: 6) {
                             ForEach(files ?? [], id: \.self) { ItemRow(name: $0.lastPathComponent, symbol: symbol(for: $0)) }
                         }
                     }
-                    .frame(maxHeight: 96)
+                    .frame(height: CGFloat(min((files ?? []).count, 4)) * 26)
                 }
             }
 
