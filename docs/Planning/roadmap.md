@@ -22,6 +22,11 @@ What each spec in `docs/specs/` actually covers, and the code it's authoritative
 
 Measurements a later session should trust rather than re-derive — each under a dated subsection. Don't trust a number that contradicts one of these without re-measuring it deliberately.
 
+### 2026-11-16 (step A's Verify)
+- A 1 GB file from the Linux server to the laptop over the tailnet took 16 s (about 60 MB/s); 60 MB took 1 s. The receive side was the Windows app, with the progress notification.
+- Windows' notification centre shows a progress notification's **Cancel** button only once the notification is expanded.
+- `AppNotificationProgressData(0)` throws "The parameter is incorrect": progress sequence numbers start at 1.
+
 ---
 
 ## Order
@@ -30,15 +35,16 @@ Measurements a later session should trust rather than re-derive — each under a
 A (protocol + Windows app) -> B (Mac app)
 ```
 
-**Nothing has landed yet.** <!-- Verify keeps this line current: "A, B and C have landed — …" -->
+**A has landed** — wire protocol v1, the Windows app and the test peer. <!-- Verify keeps this line current: "A, B and C have landed — …" -->
 
 B builds against A's wire protocol, which A's spec defines and A's test peer exercises, so A comes first.
 
 ---
 
-## A — Wire protocol and Windows app
+## A — Wire protocol and Windows app ✅ DONE
 
-**Specced → `docs/specs/windows-app-A.md`** (planning; not landed).
+**Specced → `docs/specs/windows-app-A.md`.** That spec is authoritative; the summary below is the shape, not the detail.
+**Time:** estimated implement about 5 h (30 min hands-on) and verify about 1.5 h (45 min hands-on); took plan about 45 min (21:30 to the spec commit at 22:14), implement about 50 min (to 23:05, one session), verify about 1 h (23:05 to about 00:05), all 2026-11-16. Finn's hands-on time: about 35 min of clicking through rounds in Verify, plus the certificate commands during Implement.
 
 The wire protocol every tailshare app speaks, the Windows tray app (share target, popup, notifications, first-contact trust), and a headless test peer for verifying against a second device before the Mac app exists.
 
