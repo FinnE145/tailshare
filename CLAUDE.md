@@ -4,9 +4,9 @@ tailshare — AirDrop-style sharing of files and text between devices over Tails
 A Windows app and a Mac app that register in each OS's share sheet and live in the system tray / menu bar, letting you send files or text to any device on the tailnet running tailscale. Received files land in Downloads; every receive raises a notification (open Downloads for a file, copy to clipboard for text). It exists because Taildrop doesn't work between different accounts on one tailnet, isn't on every device, and can't send plain text.
 
 ## Tech Stack
-- **Windows app:** C# on .NET 10 (SDK 10.0.404), WinUI 3 (Windows App SDK; record the exact version when the project is created). Packaged as MSIX: Windows only offers packaged apps (package identity) as share targets.
+- **Windows app:** C# on .NET 10 (SDK 10.0.404), WinUI 3 on Windows App SDK **1.8.260921001**, tray icon by **H.NotifyIcon.WinUI 2.4.1**, receiver on ASP.NET Core Kestrel (the shared framework, no package), windows built in code (the only XAML file is `App.xaml`). Packaged as MSIX, self-contained: Windows only offers packaged apps (package identity) as share targets.
 - **Mac app:** Swift and SwiftUI, a menu-bar app plus a Share Extension, built in Xcode on the Mac. Swift/Xcode versions and the minimum macOS are recorded in `mac/CLAUDE.md` from the Mac; the minimum is bounded by my own Mac, which is a couple of versions behind, not the target Mac.
-- **Network:** Tailscale (1.104.5 on the laptop). Peers come from the local Tailscale install; transfers go directly between devices over the tailnet on port 47821. The wire protocol is defined by roadmap step A's spec, and both apps must match it.
+- **Network:** Tailscale (1.104.5 on the laptop). Peers come from the local Tailscale install; transfers go directly between devices over the tailnet on port 45611. The wire protocol is defined by roadmap step A's spec, and both apps must match it.
 - **Tests:** xUnit (`dotnet test`) on Windows, XCTest (`xcodebuild test`) on the Mac.
 - **Storage:** none beyond each app's own settings; received files go to the user's Downloads folder.
 - Fill in remaining choices as features are specced. Never assume an unstated version or library.
@@ -18,6 +18,8 @@ A Windows app and a Mac app that register in each OS's share sheet and live in t
 - **`.claude/flow/for-harvest.md` is where notes for the flow skill go.** When a session learns something other repos should start with (a rule, a trap, a better way to run a phase or a kind of work), or I ask to have something raised at the next `/flow harvest`, add it there under a dated heading. Not anywhere else: not the roadmap, not a doc of its own.
 - `windows/` — the Windows app and its tests. Owned by the laptop's checkout; never edited from the Mac.
 - `mac/` — the Mac app, its Share Extension and its tests. Owned by the Mac's checkout, never edited from the laptop; has its own `mac/CLAUDE.md`.
+- `windows/Tailshare.Core/` — protocol, receiver, sender, bundles, names, settings, Tailscale wrapper, notification text. Invariants: **only Core's receiver writes into the receive folder, and only inside it; only Core's settings store writes the settings file; Core never references a Windows-only API** (the test peer runs it on Linux).
+- `windows/Tailshare.App/` — the WinUI 3 tray app, MSIX-packaged. `windows/Tailshare.TestPeer/` — headless peer over Core, for Verify only. `windows/Tailshare.Tests/` — xUnit over Core. `windows/NuGet.Config` pins nuget.org (this laptop has no NuGet source configured).
 - (Rest TBD — update this map as directories are created.)
 
 ## Keep It Simple
@@ -34,12 +36,17 @@ A Windows app and a Mac app that register in each OS's share sheet and live in t
 
 ## Commands
 These are the laptop's commands. On the Mac this section doesn't apply: `mac/CLAUDE.md` has the Mac's own.
-- **Run:** none yet — record it here verbatim once `windows/` exists.
-- **Dev port:** 47821
-- **Port 47821 is not negotiable for the dev loop** — it's the port every peer connects to, so a dev build listening anywhere else can't receive from the other devices. If it's occupied (usually an installed copy of tailshare, or another chat's dev build) or the app is otherwise unreachable, **stop and ask me to free it**. Don't reassign the port, don't fall back to a headless workaround, and don't skip the verification.
+- **Run (dev build, from the Claude app's shell):** three commands, in PowerShell. Build, register the loose build as a development package (Developer Mode is on), then launch it:
+  `dotnet build windows/Tailshare.App -c Debug -p:Platform=x64`, then `Add-AppxPackage -Register windowsTailshare.AppindDebug
+et10.0-windows10.0.19041.0win-x64AppxManifest.xml`, then `Start-Process "shell:AppsFolder$((Get-AppxPackage Tailshare.App).PackageFamilyName)!App"`. Remove it with `Get-AppxPackage Tailshare.App | Remove-AppxPackage`. On 2026-11-16 this launched, stayed up, and listened on port 45611 (nothing in the UI exercised yet). Stop the app by PID before rebuilding: a running copy locks the exe. The signed install for real use is not recorded yet.
+- **Build the MSIX (unsigned):** `dotnet build windows/Tailshare.App -c Release -p:Platform=x64 -p:GenerateAppxPackageOnBuild=true -p:AppxPackageSigningEnabled=false` writes `windows/Tailshare.App/AppPackages/`. About 5 seconds when nothing changed, about 1 minute on a first build (2026-11-16). Signing and installing it need the certificate, which isn't made yet.
+- **Test peer for the Linux server:** `dotnet publish windows/Tailshare.TestPeer -c Release -r linux-x64 --self-contained -o <out>`, about 15 seconds, 106 MB (2026-11-16).
+- **Dev port:** 45611 (the default; `port` in the settings file overrides it, but the dev loop uses the default)
+- **Port 45611 is not negotiable for the dev loop** — it's the port every peer connects to, so a dev build listening anywhere else can't receive from the other devices. If it's occupied (usually an installed copy of tailshare, or another chat's dev build) or the app is otherwise unreachable, **stop and ask me to free it**. Don't reassign the port, don't fall back to a headless workaround, and don't skip the verification.
 - **Stray processes:** a session stops what it started (a dev server, anything in the background). Stop things by PID, never `pkill -f`: run through the shell tool, its pattern matches the tool's own shell and kills it (exit 144, no output).
-- **Test:** none yet — xUnit via `dotnet test` once `windows/` exists; record it here verbatim then. `/flow implement` runs it before handing off and `/flow verify` gates the finish-up on it. If a full run can outlast a tool call's 2-minute default, give the call a longer timeout or run it in the background: a run killed mid-way skips its teardown.
+- **Test:** `dotnet test windows/Tailshare.Tests`: 182 tests, about 15 seconds including the build, the suite itself about 5 (2026-11-16). `/flow implement` runs it before handing off and `/flow verify` gates the finish-up on it. If a full run can outlast a tool call's 2-minute default, give the call a longer timeout or run it in the background: a run killed mid-way skips its teardown.
 - **Coverage:** none
+- **Mutation:** no tool; the Implement session ran 61 hand-listed mutants over Core, one `dotnet test` each, about 12 minutes (2026-11-16).
 - Lint / format: none
 - **Deploy:** none
 - **Slow commands carry a measured time.** Any command here that takes more than a few seconds (the suite, a mutation run, a build, a flash) says how long it took and when that was measured, e.g. "about 3 minutes (2026-10-14)". Time it the first time it runs, or after it changes a lot, and write it here.

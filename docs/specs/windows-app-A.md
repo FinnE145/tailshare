@@ -13,6 +13,21 @@ Step A of `docs/Planning/roadmap.md`.
 
 Not in this step: the Mac app (step B); a UI for trusted/blocked devices and a recent-items list (both in `docs/Planning/feature_ideas.md`, by Finn's call).
 
+## Where the implementation departed
+Dated 2026-11-16, during Implement. Each is also fixed in line below.
+- **Port: default 45611 (was 47821), overridable by a `port` field in `settings.json`** (Finn's call mid-implementation). Every device that should talk must use the same port: the sender connects to peers on its own configured port. The app re-reads it every 10 seconds and rebinds. The manifest's firewall rule covers 45611 only, so a different port needs its own rule. A missing, null or out-of-range (below 1024 or above 65535) `port` means 45611.
+- **`hello` also runs `whois`** and answers 403 when it fails, since the spec says every request does; it still does no trust check.
+- **A blocked sender is shown "declined"** by the sender app, so a block reveals nothing a decline doesn't.
+- **Invalid-character set is the same on every platform** (`< > : " / \ | ?` `*` and control characters), so the Linux test peer names files like the Windows app.
+- **Bundle entries containing `\` or `:` in any segment, or an empty or `.` segment, fail the transfer** (the spec named absolute, drive and `..`).
+- **Text longer than 200 characters is shown as its first 200 plus `…`**, never cutting a surrogate pair.
+- **Sender status gains `Preparing` (zipping) and `Cancelled`.**
+- **Every window is built in code; the only XAML file is `App.xaml`**, which merges the stock control styles (merging them from code failed at launch: `Application.Resources` threw in the constructor, and a hand-built `XamlControlsResources` could not find its own brushes). Startup runs from `Program.Main` rather than `OnLaunched`, so a share-sheet activation and a normal launch reach the same handler.
+- **The firewall rule is declared at Package level** in the manifest (MakeAppx rejects it under the Application).
+- **The manifest declares a COM server and toast activation (one new GUID)**, which `AppNotificationManager.Register` needs in a packaged app (without them it fails with "No COM servers are registered for this app").
+- **State at the end of the first Implement session: Core, its tests and the test peer are done. The app was launched once as a development package (2026-11-16): it starts, stays responsive, shows the popup, and listens on the Tailscale address, port 45611. Nothing was clicked: no send, no receive, no notification, no share sheet, no tray menu. The signed install is not made.**
+- Windows App SDK **1.8.260921001** and H.NotifyIcon.WinUI **2.4.1**; the app is self-contained. `windows/NuGet.Config` pins nuget.org because this laptop has no NuGet source configured.
+
 ## Layout
 All under `windows/`, one solution:
 - `windows/Tailshare.Core/` — `net10.0` class library: protocol client and receiver, transfer and bundle (zip) handling, file naming, the settings/trust store, the Tailscale CLI wrapper, notification text formatting. **Uses no Windows-only API**, because the test peer runs it on Linux. Takes the receive folder, the settings file path and a "prompt the user" callback from its host; it never decides those itself.
@@ -41,7 +56,7 @@ Field names were checked against Tailscale 1.104.5 (laptop) and 1.104.2 (Linux s
 **Tailscale down or logged out:** the receiver doesn't listen, the popup's device list shows "Tailscale not connected", and the app re-checks `tailscale status` every 10 seconds. The same 10-second check notices when this device's Tailscale IP changes, and rebinds the receiver.
 
 ## Wire protocol v1
-Plain HTTP/1.1 over TCP to the peer's Tailscale IPv4, **port 47821**. No TLS: tailnet traffic is already encrypted and mutually authenticated by WireGuard, and the source IP of a tailnet connection is bound to the sending node, so `whois` on it is a trustworthy identity.
+Plain HTTP/1.1 over TCP to the peer's Tailscale IPv4, **port 45611**. No TLS: tailnet traffic is already encrypted and mutually authenticated by WireGuard, and the source IP of a tailnet connection is bound to the sending node, so `whois` on it is a trustworthy identity.
 
 **Every request**, before anything else: the receiver runs `whois` on the remote IP. If that fails (not a tailnet address, unknown node) it answers `403` and does nothing more. The resulting `StableID` is the sender's identity for the rest of the request.
 
@@ -106,19 +121,20 @@ A zip whose entries use `/` separators and relative paths, each top-level item a
 
 **Sizes** are shown in binary units with one decimal (`2.4 MB`, `1.2 GB`; bytes under 1 KB as `512 B`).
 
-**Port 47821 already in use** at startup: a notification `Can't receive: port 47821 is in use`, and the tray tooltip says the same. Sending still works.
+**Port 45611 already in use** at startup: a notification `Can't receive: port 45611 is in use`, and the tray tooltip says the same. Sending still works.
 
 ## Settings file
 `settings.json` in the packaged app's local folder (`ApplicationData.Current.LocalFolder`). Hand-editable:
 ```json
 {
   "receiveFolder": null,
+  "port": null,
   "trusted": [ { "id": "<StableID>", "name": "<machine name when added>" } ],
   "blocked": [ { "id": "<StableID>", "name": "<machine name>" } ]
 }
 ```
 - Missing file = all defaults. Written only when Accept adds a trusted device, atomically (temp file, then replace).
-- `blocked` is only ever filled by hand.
+- `blocked` is only ever filled by hand. `port` is null or absent for the default 45611.
 - **Malformed file**: treated as all defaults (everyone gets prompted, Downloads is used) and **never overwritten**; an Accept while it's malformed lets that transfer through but isn't saved.
 
 ## Sending
@@ -137,7 +153,7 @@ What gets sent: one plain file → `file`; any other set of files and folders �
 **Single instance**: a share activation while the app is running is redirected to the running instance.
 
 ## Packaging and startup
-- MSIX with a startup task (requested on first run, so the app launches at login; the user can turn it off in Windows' Startup apps settings) and a firewall rule for inbound TCP 47821 declared in the manifest.
+- MSIX with a startup task (requested on first run, so the app launches at login; the user can turn it off in Windows' Startup apps settings) and a firewall rule for inbound TCP 45611 declared in the manifest.
 - The receiver binds only to this device's Tailscale IPv4, never to all interfaces.
 - **Signing**: a self-signed certificate made and trusted on this laptop only. The certificate and its key never enter the repo (`.gitignore` already blocks `*.pfx`/`*.cer`). Creating it writes the user certificate store (HKCU-backed), which the Claude app's shell redirects, so the creation and the admin trust command (into `LocalMachine\TrustedPeople`) go to Finn as commands for a normal terminal. Implement records the build, sign and install commands verbatim in CLAUDE.md's Commands.
 - Whether installing the package (`Add-AppxPackage`) works from the Claude app's shell is unknown; try it once, and if it doesn't, hand Finn the command.
@@ -146,9 +162,9 @@ What gets sent: one plain file → `file`; any other set of files and folders �
 `Tailshare.TestPeer`, a console app over Core, for Verify only:
 - `devices` — prints the discovered tailshare devices.
 - `send <device> <path>…` / `send <device> --text "<text>"`.
-- `listen --into <dir> [--accept | --decline | --ask]` — receives on its own Tailscale IP, port 47821. Prompts on stdin with `--ask`, and keeps its own settings file beside it.
+- `listen --into <dir> [--accept | --decline | --ask]` — receives on its own Tailscale IP, port 45611. Prompts on stdin with `--ask`, and keeps its own settings file beside it.
 
-It's published self-contained for Linux (`dotnet publish windows/Tailshare.TestPeer -c Release -r linux-x64 --self-contained -o <out>`), copied to Finn's Linux server over its key-based SSH alias (Finn gives the alias in chat; it isn't written in the repo), and run from a temp folder there. Verify stops it and deletes that folder afterwards. As of 2026-11-16 the server's port 47821 was free.
+It's published self-contained for Linux (`dotnet publish windows/Tailshare.TestPeer -c Release -r linux-x64 --self-contained -o <out>`), copied to Finn's Linux server over its key-based SSH alias (Finn gives the alias in chat; it isn't written in the repo), and run from a temp folder there. Verify stops it and deletes that folder afterwards. As of 2026-11-16 the server's port 45611 was free.
 
 ## Security checklist
 - Listen only on the Tailscale IPv4.
