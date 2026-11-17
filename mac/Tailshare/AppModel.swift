@@ -27,6 +27,10 @@ final class AppModel: ObservableObject {
     @Published var nodeState = NodeState.starting
     @Published var receives: [ReceiveItem] = []
 
+    /// Set by the popup controller: the file browser hides the popup while it is open and shows it again after.
+    var hidePopup: (() -> Void)?
+    var showPopup: (() -> Void)?
+
     let send = SendController()
     private(set) var node: Node!
     private let notifier: Notifier

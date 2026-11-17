@@ -8,28 +8,16 @@ import TailshareCore
 struct TailshareApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var delegate
 
+    // The icon and its popup are AppKit (PopupController); an App still needs one scene, and this one shows nothing.
     var body: some Scene {
-        MenuBarExtra {
-            MenuBarView(model: delegate.model)
-        } label: {
-            MenuBarIcon(model: delegate.model)
-        }
-        .menuBarExtraStyle(.window)
-    }
-}
-
-/// `paperplane` normally and `arrow.down.circle` while anything is being received: two shapes, not two colours.
-private struct MenuBarIcon: View {
-    @ObservedObject var model: AppModel
-
-    var body: some View {
-        Image(systemName: model.isReceiving ? "arrow.down.circle" : "paperplane")
+        Settings { EmptyView() }
     }
 }
 
 final class AppDelegate: NSObject, NSApplicationDelegate {
     private let notifier: Notifier
     let model: AppModel
+    private var popup: PopupController?
 
     override init() {
         let notifier = Notifier()
@@ -49,7 +37,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
         notifier.setUp()
         registerLoginItemOnce()
-        MainActor.assumeIsolated { model.start() }
+        MainActor.assumeIsolated {
+            model.start()
+            popup = PopupController(model: model)
+        }
     }
 
     // First run only. A person who turns it off in System Settings stays turned off: it is never re-registered.

@@ -42,11 +42,6 @@ struct MenuBarView: View {
             loadURLs(providers) { model.add($0) }
             return true
         }
-        // The popup is built once and only shown and hidden after that, so "opens" is "its window became key".
-        .onReceive(NotificationCenter.default.publisher(for: NSWindow.didBecomeKeyNotification)) { _ in
-            Task { await model.refreshDevices() }
-        }
-        .task { await model.refreshDevices() }
     }
 }
 
@@ -94,10 +89,13 @@ private struct FilesPane: View {
         panel.canChooseFiles = files
         panel.canChooseDirectories = directories
         panel.allowsMultipleSelection = files
+        model.hidePopup?()
         NSApp.activate(ignoringOtherApps: true)
-        // The popup closes when the panel takes focus; what is picked lands in the model, which outlives it.
         panel.begin { response in
-            if response == .OK { Task { @MainActor in model.add(panel.urls) } }
+            Task { @MainActor in
+                if response == .OK { model.add(panel.urls) }
+                model.showPopup?()
+            }
         }
     }
 }
