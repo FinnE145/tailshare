@@ -194,6 +194,19 @@ final class ProtocolTests: XCTestCase {
         XCTAssertEqual(h.host.prompts.count, 0)
     }
 
+    // spec A offer (A's Verify test): an offer body over 64 KB is refused as a bad request, not buffered; one just under is read.
+    func testOfferBodyOver64KBIs400() async throws {
+        h = try await Harness()
+        try h.trustSender()
+        var big = h.offerJSON(bytes: 5)
+        big["padding"] = String(repeating: "x", count: 70_000)
+        try await eq(try await h.raw("POST", "/v1/offer", json: big).status, 400)
+
+        var fits = h.offerJSON(bytes: 5)
+        fits["padding"] = String(repeating: "x", count: 60_000)
+        try await eq(try await h.raw("POST", "/v1/offer", json: fits).status, 200)
+    }
+
     // spec A offer: text over 1 MiB is 413, and exactly 1 MiB is accepted.
     func testTextOverOneMiBIs413() async throws {
         h = try await Harness()

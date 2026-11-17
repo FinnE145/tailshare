@@ -107,6 +107,17 @@ final class BundleTests: XCTestCase {
         XCTAssertEqual(info.totalSize, 4)
     }
 
+    // spec A Bundles (A's Verify tests): a zip with no entries fails the transfer, and a bundle that is one empty folder lands as a folder.
+    func testEmptyBundleFailsAndALoneEmptyFolderLandsAsAFolder() throws {
+        let receive = try dir()
+        XCTAssertThrowsError(try Bundles.extract(zipURL: try zip([]), into: receive, totalSize: 100))
+        XCTAssertEqual(try FileManager.default.contentsOfDirectory(atPath: receive.path), [])
+
+        let placed = try Bundles.extract(zipURL: try zip([("Empty/", "")]), into: receive, totalSize: 100)
+        XCTAssertEqual(placed.map(\.lastPathComponent), ["Empty"])
+        XCTAssertEqual(tree(receive), ["Empty": .dir])
+    }
+
     // spec B Tests/Bundles: extraction past totalSize fails and leaves nothing; exactly totalSize is fine.
     func testExtractionPastTotalSizeFails() throws {
         let content = String(repeating: "x", count: 100)

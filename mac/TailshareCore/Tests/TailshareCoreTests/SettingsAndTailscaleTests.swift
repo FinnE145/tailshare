@@ -82,6 +82,18 @@ final class SettingsTests: XCTestCase {
         }
     }
 
+    // spec A Settings file (A's Verify test): a file that exists but can't be read is malformed, and is never written over.
+    func testUnreadableFileIsMalformedAndNotWritten() throws {
+        let (s, url) = try store(#"{"trusted": []}"#)
+        try FileManager.default.setAttributes([.posixPermissions: 0o000], ofItemAtPath: url.path)
+        defer { try? FileManager.default.setAttributes([.posixPermissions: 0o644], ofItemAtPath: url.path) }
+
+        XCTAssertTrue(s.load().malformed)
+        XCTAssertFalse(s.addTrusted(senderIdentity))
+        try FileManager.default.setAttributes([.posixPermissions: 0o644], ofItemAtPath: url.path)
+        XCTAssertEqual(try String(contentsOf: url, encoding: .utf8), #"{"trusted": []}"#)
+    }
+
     // spec B Tests/Trust: a hand edit is seen on the next read without a restart.
     func testHandEditsAreSeenOnTheNextLoad() throws {
         let (s, url) = try store(#"{"trusted": [{"id": "a", "name": "A"}]}"#)

@@ -73,6 +73,13 @@ final class NamesTests: XCTestCase {
         XCTAssertEqual(Names.sanitize(String(repeating: "b", count: 201)), String(repeating: "b", count: 200))
     }
 
+    // spec A Names (A's Verify test): when capping, an extension over 20 characters is not kept (it would be most of the name).
+    func testLongExtensionIsNotKeptWhenCapping() {
+        let name = String(repeating: "a", count: 190) + "." + String(repeating: "x", count: 30)
+        XCTAssertEqual(Names.sanitize(name), String(name.prefix(200)).trimmingCharacters(in: CharacterSet(charactersIn: ". ")))
+        XCTAssertEqual(Names.sanitize(name).count, 200)
+    }
+
     // spec B Tests/Names (Mac): a name over 255 UTF-8 bytes but under 200 characters is cut to fit without splitting a character.
     func testMultibyteNameIsCutToAPFSByteLimit() {
         let cjk = String(repeating: "日", count: 150) + ".txt"
