@@ -70,6 +70,18 @@ public class NamesTests
     public void Name_of_201_is_capped_to_200() =>
         Assert.Equal(new string('d', 200), Names.Sanitize(new string('d', 201)));
 
+    [Fact] // spec Receiving/Names: length capped at 200; an extension over 20 characters isn't kept
+    public void Long_extension_is_not_kept_when_capping() =>
+        Assert.Equal(new string('a', 200), Names.Sanitize(new string('a', 220) + "." + new string('e', 30)));
+
+    [Fact] // spec Receiving/Names: the cap never leaves half a surrogate pair
+    public void Cap_does_not_split_a_surrogate_pair()
+    {
+        // The cut for ".txt" falls at index 196, between the two halves of the emoji at 195-196.
+        var result = Names.Sanitize(new string('a', 195) + "\U0001F600" + new string('b', 10) + ".txt");
+        Assert.Equal(new string('a', 195) + ".txt", result);
+    }
+
     [Fact] // spec Receiving/Names: exactly 200 is left alone
     public void Name_of_200_is_unchanged() =>
         Assert.Equal(new string('c', 200), Names.Sanitize(new string('c', 200)));

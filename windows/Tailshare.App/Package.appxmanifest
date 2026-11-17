@@ -9,8 +9,10 @@
   xmlns:com="http://schemas.microsoft.com/appx/manifest/com/windows10"
   IgnorableNamespaces="uap uap5 rescap desktop desktop2 com">
 
-  <!-- Publisher must equal the subject of the signing certificate (see CLAUDE.md's Commands). -->
-  <Identity Name="Tailshare.App" Publisher="CN=Tailshare Dev" Version="1.0.0.0" />
+  <!-- Publisher must equal the subject of the signing certificate (see CLAUDE.md's Commands).
+       Bump the last number before every reinstall: Add-AppxPackage refused (0x80073CFB) a package with
+       the same version as the installed one but different contents. -->
+  <Identity Name="Tailshare.App" Publisher="CN=Tailshare Dev" Version="1.0.0.4" />
 
   <Properties>
     <DisplayName>tailshare</DisplayName>

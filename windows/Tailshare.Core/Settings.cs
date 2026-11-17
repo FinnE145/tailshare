@@ -9,6 +9,8 @@ public sealed record Settings(
     int? Port = null)
 {
     /// <summary>The configured port if it is a usable one (1024 to 65535), else the default. Ports below 1024 need admin rights.</summary>
+    // Ignored: it was written into the hand-edited file, where editing it would change nothing.
+    [System.Text.Json.Serialization.JsonIgnore]
     public int EffectivePort => Port is >= 1024 and <= 65535 ? Port.Value : Protocol.DefaultPort;
 
     public bool IsTrusted(string id) => Trusted?.Any(t => t?.Id == id) == true;

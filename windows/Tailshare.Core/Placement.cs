@@ -31,6 +31,9 @@ internal static class Placement
             var name = Names.Unique(Names.Sanitize(rawName), n => Exists(Path.Combine(folder, n)), isFolder: false);
             var path = Path.Combine(folder, name);
             File.Move(partPath, path, overwrite: false);
+            // The temp file is hidden and a rename keeps that: every received file was invisible
+            // in Explorer until Verify caught it.
+            if (OperatingSystem.IsWindows()) File.SetAttributes(path, File.GetAttributes(path) & ~FileAttributes.Hidden);
             return path;
         }
     }

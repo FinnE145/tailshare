@@ -26,6 +26,7 @@ Dated 2026-11-16, during Implement. Each is also fixed in line below.
 - **The firewall rule is declared at Package level** in the manifest (MakeAppx rejects it under the Application).
 - **The manifest declares a COM server and toast activation (one new GUID)**, which `AppNotificationManager.Register` needs in a packaged app (without them it fails with "No COM servers are registered for this app").
 - **State at the end of the first Implement session: Core, its tests and the test peer are done. The signed MSIX was built, installed from the Claude app's shell with `Add-AppxPackage`, and launched (2026-11-16): it starts, stays responsive, shows the popup, and listens on the Tailscale address, port 45611, with its firewall rule and startup task registered. Nothing was clicked: no send, no receive, no notification, no share sheet, no tray menu. That, and the test peer on the Linux server, is Verify's.**
+- **Dated 2026-11-17, during Verify:** the tray popup is brought to the front with focus when it opens, and the share window is always on top (Finn's call: both opened behind other windows). Each reinstall bumps the package version's last number (an install of the same version with different contents is refused). The manifest's minimum is 10.0.17763, the Windows App SDK floor, below the 10.0.19041 named here; only this Windows 11 laptop runs it.
 - Windows App SDK **1.8.260921001** and H.NotifyIcon.WinUI **2.4.1**; the app is self-contained. `windows/NuGet.Config` pins nuget.org because this laptop has no NuGet source configured.
 
 ## Layout
@@ -42,7 +43,7 @@ Invariants (add them to CLAUDE.md's Codebase Map when the directories exist):
 
 Libraries (Finn approved 2026-11-16): **H.NotifyIcon.WinUI** for the tray icon, **ASP.NET Core Kestrel** (shared framework, `Microsoft.AspNetCore.App`) for the receiver, **Windows App SDK app notifications** (`AppNotificationManager`) for notifications, **`System.IO.Compression`** for zip, **xUnit** for tests. Record each exact version in CLAUDE.md's Tech Stack when it's added. Nothing else without asking.
 
-Minimum Windows version: 10.0.19041 (Windows App SDK's own floor covers it; only this laptop, on Windows 11, runs it today).
+Minimum Windows version: the manifest declares 10.0.17763, the Windows App SDK floor (the plan said 10.0.19041; only this laptop, on Windows 11, runs it today).
 
 ## Tailscale integration
 Core shells out to the Tailscale CLI (`tailscale` on PATH, else `C:\Program Files\Tailscale\tailscale.exe` on Windows; on Linux the test peer uses PATH). Two calls only:
@@ -140,7 +141,7 @@ A zip whose entries use `/` separators and relative paths, each top-level item a
 ## Sending
 What gets sent: one plain file → `file`; any other set of files and folders → `bundle`; text → `text`.
 
-**Tray popup** (left-click the tray icon; right-click menu: **Open**, **Quit**). Standard WinUI controls only, per CLAUDE.md's Frontend rules:
+**Tray popup** (left-click the tray icon; right-click menu: **Open**, **Quit**). It comes to the front with focus whenever it opens. Standard WinUI controls only, per CLAUDE.md's Frontend rules:
 - Device list, refreshed whenever the popup opens, plus a **Refresh** button. States: the list; `No devices`; `Tailscale not connected`.
 - A **Files** / **Text** switch (a send is one or the other):
   - Files: **Browse** (multi-select files), **Folder** (pick a folder), and dropping files or folders onto the popup; a list of what's picked, each removable.
@@ -148,7 +149,7 @@ What gets sent: one plain file → `file`; any other set of files and folders �
 - **Send**, enabled once a device is selected and there's something to send.
 - Status line with a progress bar: `Waiting for <device>`, sending progress, `Sent`, `<device> declined`, `<device> didn't respond`, `Failed`. A **Cancel** button while waiting or sending.
 
-**Share sheet**: the MSIX manifest registers a share target for text, web links and files (storage items, which may include folders). Sharing opens a small window with the device list and **Send**; it shows the same waiting/progress status and **Cancel**, closes when the send ends, and the result is a notification: `Sent to <device>`, `<device> declined`, `<device> didn't respond`, or `Couldn't send to <device>`. A shared web link is sent as `text` (the receiver's link rule makes it clickable).
+**Share sheet**: the MSIX manifest registers a share target for text, web links and files (storage items, which may include folders). Sharing opens a small window, always on top, with the device list and **Send**; it shows the same waiting/progress status and **Cancel**, closes when the send ends, and the result is a notification: `Sent to <device>`, `<device> declined`, `<device> didn't respond`, or `Couldn't send to <device>`. A shared web link is sent as `text` (the receiver's link rule makes it clickable).
 
 **Single instance**: a share activation while the app is running is redirected to the running instance.
 

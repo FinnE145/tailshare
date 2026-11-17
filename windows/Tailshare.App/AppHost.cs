@@ -63,7 +63,7 @@ internal sealed class AppHost
     {
         if (args?.Kind == ExtendedActivationKind.ShareTarget && args.Data is IShareTargetActivatedEventArgs share)
         {
-            new ShareWindow(this, share.ShareOperation).Activate();
+            WindowHelper.BringToFront(new ShareWindow(this, share.ShareOperation));
         }
         else if (args?.Kind is null or ExtendedActivationKind.Launch)
         {
