@@ -64,9 +64,9 @@ public static class Bundles
     /// <summary>
     /// Extracts <paramref name="zipPath"/> into <paramref name="receiveFolder"/>, each top-level item
     /// under its own collision-free name, and returns those paths. Any bad entry, or more output than
-    /// <paramref name="totalSize"/>, throws <see cref="InvalidDataException"/> and leaves nothing behind.
+    /// <paramref name="maxBytes"/>, throws <see cref="InvalidDataException"/> and leaves nothing behind.
     /// </summary>
-    public static IReadOnlyList<string> Extract(string zipPath, string receiveFolder, long totalSize, CancellationToken ct = default)
+    public static IReadOnlyList<string> Extract(string zipPath, string receiveFolder, long maxBytes, CancellationToken ct = default)
     {
         using var zip = ZipFile.OpenRead(zipPath);
 
@@ -132,7 +132,7 @@ public static class Bundles
                 {
                     written += n;
                     // The declared sizes inside a zip can lie; count what is actually written.
-                    if (written > totalSize) throw new InvalidDataException("bundle is larger than offered");
+                    if (written > maxBytes) throw new InvalidDataException("bundle is larger than offered");
                     dst.Write(buffer, 0, n);
                 }
             }

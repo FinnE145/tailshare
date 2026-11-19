@@ -339,6 +339,9 @@ public class ProtocolTests
     [InlineData("""{"kind":"file","name":"a","items":1,"bytes":1,"totalSize":-1}""")]
     [InlineData("""{"kind":"text","items":2,"bytes":1,"totalSize":1}""")]
     [InlineData("""{"kind":"bundle","items":1,"bytes":1,"totalSize":1}""")]
+    // spec Offer additions: totalSize stays required for a file and a bundle (only text may leave it out)
+    [InlineData("""{"kind":"file","name":"a","items":1,"bytes":1}""")]
+    [InlineData("""{"kind":"bundle","name":"a","items":1,"bytes":1}""")]
     public async Task Malformed_offer_is_400_and_not_prompted(string body)
     {
         await using var rig = await Rig.StartAsync();
@@ -755,13 +758,17 @@ public class ProtocolTests
 /// <summary>A minimal fixed-answer HTTP server, for a peer that isn't a protocol-1 tailshare.</summary>
 internal sealed class HttpListenerHost : IDisposable
 {
-    private readonly TcpListener _listener = new(IPAddress.Loopback, 0);
+    private readonly TcpListener _listener;
     private readonly CancellationTokenSource _cts = new();
 
     public int Port => ((IPEndPoint)_listener.LocalEndpoint).Port;
 
-    public HttpListenerHost(string body)
+    public HttpListenerHost(string body) : this(_ => body) { }
+
+    /// <param name="bodyFor">The answer for a request path, or null to read the request and never answer it.</param>
+    public HttpListenerHost(Func<string, string?> bodyFor, IPAddress? ip = null, int port = 0)
     {
+        _listener = new(ip ?? IPAddress.Loopback, port);
         _listener.Start();
         _ = Task.Run(async () =>
         {
@@ -769,18 +776,40 @@ internal sealed class HttpListenerHost : IDisposable
             {
                 try
                 {
-                    using var c = await _listener.AcceptTcpClientAsync(_cts.Token);
-                    var s = c.GetStream();
-                    var buf = new byte[1024];
-                    await s.ReadAsync(buf, _cts.Token);
-                    var payload = Encoding.UTF8.GetBytes(body);
-                    var head = $"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {payload.Length}\r\nConnection: close\r\n\r\n";
-                    await s.WriteAsync(Encoding.ASCII.GetBytes(head), _cts.Token);
-                    await s.WriteAsync(payload, _cts.Token);
+                    // Not disposed on return: a request that is never answered must stay open.
+                    var c = await _listener.AcceptTcpClientAsync(_cts.Token);
+                    _ = Task.Run(() => AnswerAsync(c, bodyFor), _cts.Token);
                 }
                 catch (Exception) { }
             }
         });
+    }
+
+    private async Task AnswerAsync(TcpClient c, Func<string, string?> bodyFor)
+    {
+        using (c)
+        {
+            try
+            {
+                var s = c.GetStream();
+                var buf = new byte[1024];
+                var n = await s.ReadAsync(buf, _cts.Token);
+                // "GET /v1/devices HTTP/1.1": the second word.
+                var path = Encoding.ASCII.GetString(buf, 0, n).Split(' ')[1];
+                var body = bodyFor(path);
+                if (body is null)
+                {
+                    await Task.Delay(Timeout.Infinite, _cts.Token);
+                    return;
+                }
+
+                var payload = Encoding.UTF8.GetBytes(body);
+                var head = $"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {payload.Length}\r\nConnection: close\r\n\r\n";
+                await s.WriteAsync(Encoding.ASCII.GetBytes(head), _cts.Token);
+                await s.WriteAsync(payload, _cts.Token);
+            }
+            catch (Exception) { }
+        }
     }
 
     public void Dispose() { _cts.Cancel(); _listener.Stop(); }

@@ -160,7 +160,57 @@ public class SettingsTests
 
         using var doc = System.Text.Json.JsonDocument.Parse(File.ReadAllText(store.FilePath));
         var names = doc.RootElement.EnumerateObject().Select(p => p.Name).OrderBy(n => n, StringComparer.Ordinal);
-        Assert.Equal(["blocked", "port", "receiveFolder", "trusted"], names);
+        Assert.Equal(["blocked", "hub", "port", "receiveFolder", "trusted"], names);
+    }
+
+    [Theory] // spec Apps: the hub setting null, absent and "" all mean find it automatically
+    [InlineData("""{}""")]
+    [InlineData("""{"hub":null}""")]
+    [InlineData("""{"hub":""}""")]
+    [InlineData("""{"hub":"  "}""")]
+    public void Unset_hub_means_automatic(string json)
+    {
+        using var dir = new TempDir();
+        var path = dir.Combine("settings.json");
+        File.WriteAllText(path, json);
+        Assert.Null(new SettingsStore(path).Load().Value.EffectiveHub);
+    }
+
+    [Theory] // spec Apps: otherwise a Tailscale machine name or IPv4, used as written
+    [InlineData("homebox", "homebox")]
+    [InlineData("100.64.0.9", "100.64.0.9")]
+    [InlineData(" homebox ", "homebox")]
+    public void A_set_hub_is_the_hub(string written, string expected)
+    {
+        using var dir = new TempDir();
+        var path = dir.Combine("settings.json");
+        File.WriteAllText(path, System.Text.Json.JsonSerializer.Serialize(new { hub = written }));
+        Assert.Equal(expected, new SettingsStore(path).Load().Value.EffectiveHub);
+    }
+
+    [Fact] // spec Apps: the app never writes hub, and an Accept rewrites the file with hub exactly as it was
+    public void AddTrusted_keeps_the_hub_exactly_as_written()
+    {
+        using var dir = new TempDir();
+        var path = dir.Combine("settings.json");
+        File.WriteAllText(path, """{ "hub": " Home-Box " }""");
+        var store = new SettingsStore(path);
+
+        store.AddTrusted(new Identity("n1", "a"));
+
+        using var doc = System.Text.Json.JsonDocument.Parse(File.ReadAllText(path));
+        Assert.Equal(" Home-Box ", doc.RootElement.GetProperty("hub").GetString());
+    }
+
+    [Fact] // spec Apps: a settings file with no hub still has none after an Accept (null is automatic)
+    public void AddTrusted_does_not_invent_a_hub()
+    {
+        using var dir = new TempDir();
+        var store = new SettingsStore(dir.Combine("settings.json"));
+
+        store.AddTrusted(new Identity("n1", "a"));
+
+        Assert.Null(store.Load().Value.EffectiveHub);
     }
 
     [Fact] // spec Settings file: read fresh, so a hand edit applies at once

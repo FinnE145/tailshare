@@ -34,7 +34,7 @@ public static class Notices
         // Names here come from a peer and are shown before anything is saved; show the form that
         // would be written, which has no control characters or path parts.
         var name = Names.Sanitize(o.Name);
-        var size = FormatSize(o.TotalSize);
+        var size = FormatSize(o.TotalOrZero);
         if (o.Items > 1) return $"{name} and {o.Items - 1} more, {size}";
         if (o.Kind == OfferKind.Bundle && o.IsFolder) return $"{name} (folder), {size}";
         return $"{name}, {size}";
@@ -50,6 +50,26 @@ public static class Notices
         if (LinkDetector.TryGetLink(text, out var uri)) return new("From " + device, uri.OriginalString);
         return new("From " + device, Truncate(text));
     }
+
+    public static string HoldWaiting(string device) => $"Waiting for {device} to pick up";
+
+    /// <summary>The status line for a hold that has ended.</summary>
+    public static string HoldStatus(HoldOutcome outcome, string device) => outcome switch
+    {
+        HoldOutcome.PickedUp => $"Picked up by {device}",
+        HoldOutcome.NotPickedUp => "Not picked up",
+        HoldOutcome.Cancelled => "Cancelled",
+        _ => "Failed",
+    };
+
+    /// <summary>The notification for a hold that ended. Null for a cancel: the user did that themselves.</summary>
+    public static string? HoldNotice(HoldOutcome outcome, string device) => outcome switch
+    {
+        HoldOutcome.PickedUp => $"Picked up by {device}",
+        HoldOutcome.NotPickedUp => $"Not picked up by {device}",
+        HoldOutcome.Failed => $"Couldn't send to {device}",
+        _ => null,
+    };
 
     public static Notice Progress(string device, Offer o) => new($"Receiving {Describe(o)} from {device}", "");
 

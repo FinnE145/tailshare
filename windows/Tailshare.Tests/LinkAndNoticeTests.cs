@@ -120,4 +120,40 @@ public class NoticesTests
     [Fact] // spec Receiving/Notifications: title is "From <device>"
     public void Text_notice_title() =>
         Assert.Equal("From sender-box", Notices.ReceivedText("sender-box", "hi").Title);
+
+    [Fact] // spec Offer additions: text may omit totalSize; a missing size reads as 0 and the notice still says "text"
+    public void A_text_offer_without_sizes_is_described_as_text() =>
+        Assert.Equal("text", Notices.Describe(new Offer(OfferKind.Text, null, 1, false, null, null)));
+
+    [Fact] // spec Offer additions: a file offer without bytes (a phone's) is described from totalSize
+    public void A_file_offer_without_bytes_is_described_from_total_size() =>
+        Assert.Equal("a.jpg, 2.0 KB", Notices.Describe(new Offer(OfferKind.File, "a.jpg", 1, false, null, 2048, true)));
+
+    [Fact] // spec Offer additions: progress is measured against bytes, or totalSize when there are no bytes
+    public void Expected_bytes_is_bytes_else_total_size()
+    {
+        Assert.Equal(7, new Offer(OfferKind.File, "a", 1, false, 7, 9).ExpectedBytes);
+        Assert.Equal(9, new Offer(OfferKind.File, "a", 1, false, null, 9).ExpectedBytes);
+        Assert.Equal(0, new Offer(OfferKind.Text, null, 1, false, null, null).ExpectedBytes);
+    }
+
+    [Fact] // spec Sending to a phone: the waiting status text
+    public void Hold_waiting_text() =>
+        Assert.Equal("Waiting for pixel-box to pick up", Notices.HoldWaiting("pixel-box"));
+
+    [Theory] // spec Sending to a phone: status line after a hold, "Not picked up" without the device
+    [InlineData(HoldOutcome.PickedUp, "Picked up by pixel-box")]
+    [InlineData(HoldOutcome.NotPickedUp, "Not picked up")]
+    [InlineData(HoldOutcome.Failed, "Failed")]
+    [InlineData(HoldOutcome.Cancelled, "Cancelled")]
+    public void Hold_status_text(HoldOutcome outcome, string expected) =>
+        Assert.Equal(expected, Notices.HoldStatus(outcome, "pixel-box"));
+
+    [Theory] // spec Sending to a phone: every hold ends in a notification except a cancel (which raises none)
+    [InlineData(HoldOutcome.PickedUp, "Picked up by pixel-box")]
+    [InlineData(HoldOutcome.NotPickedUp, "Not picked up by pixel-box")]
+    [InlineData(HoldOutcome.Failed, "Couldn't send to pixel-box")]
+    [InlineData(HoldOutcome.Cancelled, null)]
+    public void Hold_notice_text(HoldOutcome outcome, string? expected) =>
+        Assert.Equal(expected, Notices.HoldNotice(outcome, "pixel-box"));
 }

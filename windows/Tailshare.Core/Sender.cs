@@ -17,6 +17,15 @@ public sealed record SendProgress(SendStage Stage, long BytesSent, long BytesTot
 
 public enum SendOutcome { Sent, Declined, DidntRespond, Failed, Cancelled }
 
+/// <summary>Something the device list offers to send to: a computer we can reach, or a phone or iPad the hub knows.</summary>
+public sealed record Target(Identity Identity, PeerInfo? Computer)
+{
+    public bool IsMobile => Computer is null;
+}
+
+/// <param name="Mobiles">Phones and iPads from the hub; empty when there is no hub or it didn't answer.</param>
+public sealed record DeviceList(IReadOnlyList<PeerInfo> Computers, IReadOnlyList<Identity> Mobiles);
+
 public sealed class Sender : IDisposable
 {
     private readonly HttpClient _http;
@@ -37,26 +46,76 @@ public sealed class Sender : IDisposable
 
     private Uri Url(PeerInfo to, string path) => new($"http://{to.Ip}:{_port}{path}");
 
-    /// <summary>The online peers that answer <c>hello</c> as tailshare protocol 1, probed in parallel.</summary>
-    public async Task<IReadOnlyList<PeerInfo>> DiscoverAsync(TailnetStatus status, CancellationToken ct)
+    /// <summary>The online peers that answer <c>hello</c> as a tailshare computer (protocol 1, not a hub), probed in parallel.</summary>
+    public async Task<IReadOnlyList<PeerInfo>> DiscoverAsync(TailnetStatus status, CancellationToken ct) =>
+        (await ProbeAsync(status, ct)).Where(a => a.Hello.Hub != true).Select(a => a.Peer).ToList();
+
+    /// <summary>
+    /// The computers, plus the phones and iPads of the hub. The hello probe already reaches every
+    /// online peer, so finding a hub costs nothing extra; only listing its phones is another request.
+    /// A hub that is missing or slow costs the phones and nothing else.
+    /// </summary>
+    /// <param name="hubSetting">The settings file's <c>hub</c>: a machine name or Tailscale IPv4, or null to use whichever hub answered.</param>
+    public async Task<DeviceList> DiscoverDevicesAsync(TailnetStatus status, string? hubSetting, CancellationToken ct)
     {
-        var probes = status.Peers.Where(p => p.Online).Select(async p => await IsTailshareAsync(p, ct) ? p : null);
-        var found = await Task.WhenAll(probes);
-        return found.Where(p => p is not null).Select(p => p!).ToList();
+        var answers = await ProbeAsync(status, ct);
+        var computers = answers.Where(a => a.Hello.Hub != true).Select(a => a.Peer).ToList();
+
+        var hub = hubSetting is null
+            ? answers.Where(a => a.Hello.Hub == true).Select(a => a.Peer).OrderBy(p => p.Identity.Name, StringComparer.OrdinalIgnoreCase).FirstOrDefault()
+            : FindConfiguredHub(status, hubSetting);
+
+        var mobiles = hub is null ? [] : await FetchMobilesAsync(hub, ct);
+        // A device is listed once: a computer that also turns up as a phone stays a computer.
+        return new(computers, mobiles.Where(m => computers.All(c => c.Identity.Id != m.Id)).ToList());
     }
 
-    private async Task<bool> IsTailshareAsync(PeerInfo peer, CancellationToken ct)
+    private static PeerInfo? FindConfiguredHub(TailnetStatus status, string setting)
+    {
+        if (System.Net.IPAddress.TryParse(setting, out var ip))
+        {
+            // An address needs no lookup, so it works for a hub Tailscale lists under another name too.
+            return status.Peers.FirstOrDefault(p => p.Ip.Equals(ip)) ?? new PeerInfo(new Identity("", setting), ip, true);
+        }
+        return status.Peers.FirstOrDefault(p => p.Online && p.Identity.Name.Equals(setting, StringComparison.OrdinalIgnoreCase));
+    }
+
+    private async Task<IReadOnlyList<Identity>> FetchMobilesAsync(PeerInfo hub, CancellationToken ct)
+    {
+        using var timeout = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        timeout.CancelAfter(HelloTimeout);
+        try
+        {
+            var devices = await _http.GetFromJsonAsync<HubDevices>(Url(hub, "/v1/devices"), Protocol.Json, timeout.Token);
+            return (devices?.Mobiles ?? []).Where(m => m is not null && !string.IsNullOrEmpty(m.Id) && !string.IsNullOrEmpty(m.Name)).ToList();
+        }
+        catch (Exception ex) when (ex is HttpRequestException or OperationCanceledException or System.Text.Json.JsonException or NotSupportedException)
+        {
+            return [];
+        }
+    }
+
+    private sealed record Answer(PeerInfo Peer, HelloResponse Hello);
+
+    private async Task<IReadOnlyList<Answer>> ProbeAsync(TailnetStatus status, CancellationToken ct)
+    {
+        var probes = status.Peers.Where(p => p.Online).Select(async p => await HelloAsync(p, ct) is { } hello ? new Answer(p, hello) : null);
+        var found = await Task.WhenAll(probes);
+        return found.Where(a => a is not null).Select(a => a!).ToList();
+    }
+
+    private async Task<HelloResponse?> HelloAsync(PeerInfo peer, CancellationToken ct)
     {
         using var timeout = CancellationTokenSource.CreateLinkedTokenSource(ct);
         timeout.CancelAfter(HelloTimeout);
         try
         {
             var hello = await _http.GetFromJsonAsync<HelloResponse>(Url(peer, "/v1/hello"), Protocol.Json, timeout.Token);
-            return hello is { App: Protocol.AppName, Protocol: Protocol.Version };
+            return hello is { App: Protocol.AppName, Protocol: Protocol.Version } ? hello : null;
         }
         catch (Exception ex) when (ex is HttpRequestException or OperationCanceledException or System.Text.Json.JsonException or NotSupportedException)
         {
-            return false;
+            return null;
         }
     }
 
@@ -98,7 +157,7 @@ public sealed class Sender : IDisposable
                     return SendOutcome.Failed;
             }
 
-            progress?.Report(new SendProgress(SendStage.Waiting, 0, offer.Bytes));
+            progress?.Report(new SendProgress(SendStage.Waiting, 0, offer.Bytes ?? 0));
             var token = await OfferAsync(to, offer, ct);
             if (token.Outcome is not null) return token.Outcome.Value;
 
@@ -167,10 +226,10 @@ public sealed class Sender : IDisposable
         IProgress<SendProgress>? progress, CancellationToken ct)
     {
         await using var body = openBody();
-        var content = new StreamContent(new ProgressStream(body, n => progress?.Report(new SendProgress(SendStage.Sending, n, offer.Bytes))));
+        var content = new StreamContent(new ProgressStream(body, n => progress?.Report(new SendProgress(SendStage.Sending, n, offer.Bytes ?? 0))));
         content.Headers.ContentLength = offer.Bytes;
 
-        progress?.Report(new SendProgress(SendStage.Sending, 0, offer.Bytes));
+        progress?.Report(new SendProgress(SendStage.Sending, 0, offer.Bytes ?? 0));
         using var response = await _http.PutAsync(Url(to, "/v1/upload/" + Uri.EscapeDataString(token)), content, ct);
         return response.IsSuccessStatusCode ? SendOutcome.Sent : SendOutcome.Failed;
     }

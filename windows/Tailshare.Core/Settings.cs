@@ -6,12 +6,20 @@ public sealed record Settings(
     string? ReceiveFolder = null,
     IReadOnlyList<Identity>? Trusted = null,
     IReadOnlyList<Identity>? Blocked = null,
-    int? Port = null)
+    int? Port = null,
+    string? Hub = null)
 {
     /// <summary>The configured port if it is a usable one (1024 to 65535), else the default. Ports below 1024 need admin rights.</summary>
     // Ignored: it was written into the hand-edited file, where editing it would change nothing.
     [System.Text.Json.Serialization.JsonIgnore]
     public int EffectivePort => Port is >= 1024 and <= 65535 ? Port.Value : Protocol.DefaultPort;
+
+    /// <summary>
+    /// The machine name or Tailscale IPv4 of the hub, or null to find one automatically. Hand-edited:
+    /// nothing in tailshare ever writes it, and a rewrite of the file keeps whatever it said.
+    /// </summary>
+    [System.Text.Json.Serialization.JsonIgnore]
+    public string? EffectiveHub => string.IsNullOrWhiteSpace(Hub) ? null : Hub.Trim();
 
     public bool IsTrusted(string id) => Trusted?.Any(t => t?.Id == id) == true;
     public bool IsBlocked(string id) => Blocked?.Any(t => t?.Id == id) == true;

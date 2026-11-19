@@ -59,6 +59,12 @@ public sealed class ReceiverOptions
 
     public TimeSpan PromptTimeout { get; init; } = Protocol.PromptTimeout;
     public TimeSpan TokenLifetime { get; init; } = Protocol.TokenLifetime;
+
+    /// <summary>
+    /// What is held for phones. The host passes its own so a hold survives the receiver being rebound
+    /// to a new address; a receiver given none holds nothing the host can see.
+    /// </summary>
+    public PickupStore Pickups { get; init; } = new();
 }
 
 public sealed class PortInUseException(Exception inner) : Exception("The port is already in use", inner);
@@ -95,6 +101,8 @@ public sealed class Receiver : IAsyncDisposable
         app.MapGet("/v1/hello", (Delegate)HelloAsync);
         app.MapPost("/v1/offer", (Delegate)OfferAsync);
         app.MapPut("/v1/upload/{token}", (Delegate)UploadAsync);
+        app.MapGet("/v1/pickup", (Delegate)PickupListAsync);
+        app.MapGet("/v1/pickup/{token}", (Delegate)PickupDownloadAsync);
 
         try
         {
@@ -167,6 +175,7 @@ public sealed class Receiver : IAsyncDisposable
         // Read fresh: the file is hand-edited and edits apply to the next offer.
         var settings = _o.Settings.Load().Value;
         if (settings.IsBlocked(who.Id)) return Error(403, "blocked");
+        // Without bytes the limit is enforced on the upload instead, as the body arrives.
         if (offer.Kind == OfferKind.Text && offer.Bytes > Protocol.TextLimitBytes) return Results.StatusCode(413);
 
         if (!settings.IsTrusted(who.Id))
@@ -218,7 +227,8 @@ public sealed class Receiver : IAsyncDisposable
         if (pending.ExpiresUtc < DateTime.UtcNow) return Results.StatusCode(403);
 
         var offer = pending.Offer;
-        if (ctx.Request.ContentLength != offer.Bytes) return Results.StatusCode(400);
+        // A declared length is a promise the upload must keep; an offer without one takes what arrives.
+        if (offer.Bytes is { } declared && ctx.Request.ContentLength != declared) return Results.StatusCode(400);
 
         return offer.Kind == OfferKind.Text
             ? await ReceiveTextAsync(ctx, who, offer)
@@ -227,10 +237,22 @@ public sealed class Receiver : IAsyncDisposable
 
     private async Task<IResult> ReceiveTextAsync(HttpContext ctx, Identity who, Offer offer)
     {
-        var buffer = new byte[offer.Bytes];
+        byte[] buffer;
         try
         {
-            await ctx.Request.Body.ReadExactlyAsync(buffer, ctx.RequestAborted);
+            if (offer.Bytes is { } declared)
+            {
+                buffer = new byte[declared];
+                await ctx.Request.Body.ReadExactlyAsync(buffer, ctx.RequestAborted);
+            }
+            else
+            {
+                if (ctx.Request.ContentLength > Protocol.TextLimitBytes) return Results.StatusCode(413);
+                // Chunked bodies have no length to check first: stop reading at the limit, keep nothing.
+                var read = await ReadUpToAsync(ctx.Request.Body, Protocol.TextLimitBytes, ctx.RequestAborted);
+                if (read is null) return Results.StatusCode(413);
+                buffer = read;
+            }
         }
         catch (Exception ex) when (ex is EndOfStreamException or IOException or BadHttpRequestException)
         {
@@ -243,6 +265,20 @@ public sealed class Receiver : IAsyncDisposable
 
         _o.Host.Received(who, offer, new ReceivedItem([], text));
         return Results.Json(new { ok = true }, Protocol.Json);
+    }
+
+    /// <summary>The whole body, or null if it is longer than <paramref name="limit"/>.</summary>
+    private static async Task<byte[]?> ReadUpToAsync(Stream body, long limit, CancellationToken ct)
+    {
+        using var all = new MemoryStream();
+        var buffer = new byte[81920];
+        int n;
+        while ((n = await body.ReadAsync(buffer, ct)) > 0)
+        {
+            if (all.Length + n > limit) return null;
+            all.Write(buffer, 0, n);
+        }
+        return all.ToArray();
     }
 
     private async Task<IResult> ReceiveFileAsync(HttpContext ctx, Identity who, Offer offer)
@@ -258,12 +294,12 @@ public sealed class Receiver : IAsyncDisposable
             await using (var fs = new FileStream(part, FileMode.CreateNew, FileAccess.Write, FileShare.None, 81920, useAsync: true))
             {
                 if (OperatingSystem.IsWindows()) File.SetAttributes(part, FileAttributes.Hidden);
-                await CopyAsync(ctx.Request.Body, fs, incoming, cts.Token);
+                await CopyAsync(ctx.Request.Body, fs, incoming.Progress, cts.Token);
             }
 
             if (offer.Kind == OfferKind.Bundle)
             {
-                placed = Bundles.Extract(part, folder, offer.TotalSize, cts.Token);
+                placed = Bundles.Extract(part, folder, Protocol.ExtractionCap(offer), cts.Token);
                 File.Delete(part);
             }
             else
@@ -293,9 +329,10 @@ public sealed class Receiver : IAsyncDisposable
         return Results.Json(new { ok = true }, Protocol.Json);
     }
 
-    // No length checks here: the upload handler has already required Content-Length to equal the
-    // offer's bytes, and Kestrel itself fails the read on a short body and never yields a long one.
-    private static async Task CopyAsync(Stream from, Stream to, IIncomingTransfer incoming, CancellationToken ct)
+    // No length checks here: when the offer declared its bytes, the upload handler has already required
+    // Content-Length to equal them, and Kestrel itself fails the read on a short body and never yields
+    // a long one. An offer without bytes takes whatever arrives.
+    private static async Task CopyAsync(Stream from, Stream to, Action<long> progress, CancellationToken ct)
     {
         var buffer = new byte[81920];
         long total = 0;
@@ -311,10 +348,70 @@ public sealed class Receiver : IAsyncDisposable
             if (clock.Elapsed - lastReport > TimeSpan.FromMilliseconds(250))
             {
                 lastReport = clock.Elapsed;
-                incoming.Progress(total);
+                progress(total);
             }
         }
-        incoming.Progress(total);
+        progress(total);
+    }
+
+    // ---- pickup: what this computer is holding for a phone
+
+    private async Task<IResult> PickupListAsync(HttpContext ctx)
+    {
+        var who = await WhoAsync(ctx);
+        if (who is null) return Results.StatusCode(403);
+        return Results.Json(_o.Pickups.ListFor(who.Id), Protocol.Json);
+    }
+
+    private async Task<IResult> PickupDownloadAsync(HttpContext ctx, string token)
+    {
+        var who = await WhoAsync(ctx);
+        if (who is null) return Results.StatusCode(403);
+
+        // Unknown, expired, already taken and someone else's all look the same from outside.
+        var item = _o.Pickups.Begin(token, who.Id);
+        if (item is null) return Results.StatusCode(403);
+
+        Stream body;
+        try { body = item.Open(); }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            // The held file was moved or deleted after the send started.
+            item.Finish(false);
+            return Results.StatusCode(404);
+        }
+
+        await using (body)
+        {
+            using var cts = CancellationTokenSource.CreateLinkedTokenSource(ctx.RequestAborted, item.Cancelled);
+            ctx.Response.ContentType = item.ContentType;
+            ctx.Response.ContentLength = body.Length;
+            if (item.FileName is { } name) ctx.Response.Headers.ContentDisposition = ContentDisposition(name);
+
+            try
+            {
+                await CopyAsync(body, ctx.Response.Body, item.Progress, cts.Token);
+                item.Finish(true);
+            }
+            catch (Exception)
+            {
+                // The phone went away, the hold was cancelled, or the file failed mid-read. The status is
+                // already sent, so the only way to tell the phone is to cut the connection.
+                item.Finish(false);
+                ctx.Abort();
+            }
+        }
+        return Results.Empty;
+    }
+
+    // Header values must be ASCII, and a name with a quote in it would end the value early. The
+    // fallback has neither; filename* carries the real name for clients that read it.
+    private static string ContentDisposition(string name)
+    {
+        var safe = Names.Sanitize(name);
+        var ascii = new string(safe.Select(c => c is >= ' ' and <= '~' ? c : '_').ToArray());
+        var header = $"attachment; filename=\"{ascii}\"";
+        return ascii == safe ? header : header + $"; filename*=UTF-8''{Uri.EscapeDataString(safe)}";
     }
 
     private string ReceiveFolder()
