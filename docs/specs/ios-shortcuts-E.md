@@ -30,6 +30,9 @@ Dated 2026-11-18, during the laptop's Implement (Core, the hub, the Windows app)
 - **Device names in the hub's `computers` and `mobiles` are Tailscale's current names from `status`**, not the name stored at registration (which is kept in the file for reading). A renamed phone needs no new registration. A device that is registered but not online isn't listed, as specced.
 - **`whois` runs before routing in the hub**, so a caller Tailscale doesn't know gets `403` even for a path the hub doesn't serve; a tailnet caller gets `404` there.
 - **The hub assumes every computer listens on the default port 45611.** It has no settings file; an app whose `port` setting is changed is invisible to it.
+- **`PickupStore` (Core) is owned by the host and handed to the receiver** (`ReceiverOptions.Pickups`), so the tray app's 10-second rebind doesn't drop a hold. `HoldAsync` returns `PickedUp`, `NotPickedUp`, `Failed` or `Cancelled`; the app's controller turns it into the status line and the notification.
+- **The Windows share window sends once.** Its Send button stays off after the click, also while a hold only waits, because the window closes when the hold ends.
+- **The compose file takes its data directory from `HUB_DATA` (default `./data`)**, so the server session can point it at the stack's own `data/`. The Docker build context is `windows/` (`windows/.dockerignore` keeps `bin`/`obj` out of it). Neither file was built here: Docker isn't installed on the laptop, so the server session's build is the first.
 
 Mac (TailshareCore and the Mac app, Implement, 2026-11-18 and 2026-11-19), added to the laptop's list above:
 - **The Mac matches the laptop's 5 second wait for the hub's device list** (`Wire.devicesTimeout`), with a hello's wait still 2 seconds. The popup's refresh button turns into a spinner and is disabled while a refresh runs.
@@ -40,9 +43,6 @@ Mac (TailshareCore and the Mac app, Implement, 2026-11-18 and 2026-11-19), added
 - **The popup clears what was sent when the hold is picked up** (as it does when a send to a computer succeeds), and keeps it otherwise.
 - **The Shortcuts are written by `shortcuts/generate.py`**, which produces the unsigned files (the spec said they are authored as files; nobody edits them by hand). Two behaviours differ from the text: an unreachable hub ends in Shortcuts' own error message, not `Can't reach the hub` (a request that fails can't be caught); and a link is found with a regular expression through Replace Text, because Match Text can't be filled from a file. Neither has run on a device yet.
 - **Holds are served by the app's receiver but kept in a `PickupHolds` the app creates once** (`Node.holds`), so a changed address or edited port, which rebinds the receiver, doesn't drop them.
-- **`PickupStore` (Core) is owned by the host and handed to the receiver** (`ReceiverOptions.Pickups`), so the tray app's 10-second rebind doesn't drop a hold. `HoldAsync` returns `PickedUp`, `NotPickedUp`, `Failed` or `Cancelled`; the app's controller turns it into the status line and the notification.
-- **The Windows share window sends once.** Its Send button stays off after the click, also while a hold only waits, because the window closes when the hold ends.
-- **The compose file takes its data directory from `HUB_DATA` (default `./data`)**, so the server session can point it at the stack's own `data/`. The Docker build context is `windows/` (`windows/.dockerignore` keeps `bin`/`obj` out of it). Neither file was built here: Docker isn't installed on the laptop, so the server session's build is the first.
 
 ## Decisions (Finn, 2026-11-18)
 - Shortcuts in both directions; no phone notification; a manual pull is fine.
