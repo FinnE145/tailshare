@@ -38,11 +38,15 @@ Mac (TailshareCore and the Mac app, Implement, 2026-11-18 and 2026-11-19), added
 - **The Mac matches the laptop's 5 second wait for the hub's device list** (`Wire.devicesTimeout`), with a hello's wait still 2 seconds. The popup's refresh button turns into a spinner and is disabled while a refresh runs.
 - **The 120 seconds start when the item is listed**, not when a bundle begins zipping: a long `Preparing` would otherwise eat the pickup time.
 - **The settings file always has a `hub` key**: written as `null` when absent, like `receiveFolder` and `port`, so the file lists every key. `hub` is carried through every write unchanged (`""` stays `""`).
-- **A `hub` setting is a machine name or a Tailscale IPv4** (100.64.0.0/10). Anything else is looked up as a machine name among the peers, and a name that matches no peer means no mobiles; it is never turned into a request to an arbitrary host. The name is matched ignoring case.
+- **A `hub` setting is a machine name or a Tailscale IPv4** (100.64.0.0/10; the Windows app follows the same rule since Verify). Anything else is looked up as a machine name among the peers, and a name that matches no peer means no mobiles; it is never turned into a request to an arbitrary host. The name is matched ignoring case.
 - **`SendOutcome` gained `pickedUp` and `notPickedUp`**, and a phone or iPad in the device list is a `PeerInfo` with `isMobile` and an empty address; the apps' `Sender` refuses to send to one.
 - **The popup clears what was sent when the hold is picked up** (as it does when a send to a computer succeeds), and keeps it otherwise.
 - **The Shortcuts are written by `shortcuts/generate.py`**, which produces the unsigned files (the spec said they are authored as files; nobody edits them by hand). Two behaviours differ from the text: an unreachable hub ends in Shortcuts' own error message, not `Can't reach the hub` (a request that fails can't be caught); and a link is found with a regular expression through Replace Text, because Match Text can't be filled from a file. Neither has run on a device yet.
 - **Holds are served by the app's receiver but kept in a `PickupHolds` the app creates once** (`Node.holds`), so a changed address or edited port, which rebinds the receiver, doesn't drop them.
+
+Verify (laptop, 2026-11-19), Finn's calls:
+- **The Windows app now follows the Mac's `hub` rule**: an address is used only when it is a listed peer's or in 100.64.0.0/10; any other address means no mobiles and is never asked. Before, Windows asked whatever address the setting held.
+- **Get from tailshare asks before it downloads, and shows some files instead of saving them** (kept): a file or bundle first shows `Download from <computer>?` (`Download files from <computer>?` for a bundle) with its name and size, and Cancel leaves it held until its time runs out. An image, a PDF or text opens in Quick Look; anything else, and an unzipped bundle, goes to the Save picker.
 
 ## Decisions (Finn, 2026-11-18)
 - Shortcuts in both directions; no phone notification; a manual pull is fine.
@@ -122,7 +126,7 @@ Finn opens a session on the server, which clones the repo and reads this section
 - Edits nothing in the repo; a bug in the hub goes back to Finn.
 
 ## Apps: the `hub` setting and the device list
-- **Settings file** (both apps) gains `hub`: null, absent or `""` = find the hub automatically; otherwise a Tailscale machine name or a Tailscale IPv4. Read fresh on every refresh. **Never written by the app**, and kept as it is whenever the settings store writes the file (on Accept).
+- **Settings file** (both apps) gains `hub`: null, absent or `""` = find the hub automatically; otherwise a Tailscale machine name or a Tailscale IPv4 (an address outside 100.64.0.0/10 that isn't a listed peer's is never asked: no mobiles). Read fresh on every refresh. **Never written by the app**, and kept as it is whenever the settings store writes the file (on Accept).
 - **Refresh** (popup and share window, both apps): discover computers as before. The `hello` probe already reaches every online peer, so a hub is found in the same pass, at no extra cost. With `hub` set, that device is the hub instead. With several hubs and no setting, the first by name. If there's a hub, ask it `GET /v1/devices` and add its `mobiles`, excluding any device already listed. If there's no hub or it doesn't answer within 5 seconds, the list simply has no phones or iPads, with no error shown. (Not 2: the hub used to probe its peers inside the request, so a silent computer made it take a full 2 second hello timeout and a 2 second wait lost every phone. The hub now answers from a cache, but the wait stays 5 as margin. Found 2026-11-19; the Mac app must wait 5 seconds too.)
 - **Mobile rows** carry a phone icon (SF Symbol `iphone` on the Mac, Segoe Fluent Icons `CellPhone` on Windows) beside the name. The button still reads `Send to <device>`.
 
@@ -146,13 +150,13 @@ Both start with `POST /v1/register` to the hub, so either Shortcut's first run r
 **Get from tailshare** (run by hand: home screen, widget, Back Tap or the Action button):
 1. Register; for each of `computers`, `GET /v1/pickup`, then fetch each item.
 2. Text: copied to the clipboard and shown. A link (the same rule as A: the trimmed text is one `http`/`https` URL with no whitespace) asks **Open** or **Copy**.
-3. A file: Save to Files. A bundle: unzipped, then Save to Files.
+3. A file or a bundle first asks `Download from <computer>?` (`Download files from …` for a bundle) with its name and size; Cancel leaves it held. A file then opens in Quick Look when it is an image, a PDF or text, and goes to Save to Files otherwise. A bundle: unzipped, then Save to Files.
 4. Nothing anywhere: `Nothing to pick up`.
 
 **Known unknowns, for the Mac's Implement and for Verify, on a real iPhone**:
 - Whether Shortcuts sends `Content-Length` for an upload, and how exact its file size is. The protocol covers both cases: `bytes` is optional and `sizeIsEstimate` loosens the cap.
 - **How long Shortcuts waits on a request.** An `offer` to a computer that hasn't trusted the phone stays open for up to 120 seconds. If Shortcuts gives up sooner, first contact fails until the computer has accepted. Verify measures it and records the number; it doesn't work around it without asking.
-- Whether Shortcuts allows plain `http://` to a tailnet name (the Mac app needed `NSAllowsArbitraryLoads` for the same thing, 2026-11-17).
+- Whether Shortcuts allows plain `http://` to a tailnet name (the Mac app needed `NSAllowsArbitraryLoads` for the same thing, 2026-11-17). **Answered in Verify (2026-11-19): it does.** On the iPhone, register to the hub by machine name and sends and pickups to the computers' tailnet IPv4s all worked over plain `http://`, after Shortcuts' one-time "Allow … to connect" and "Allow … to send" prompts.
 
 ## Codebase map additions (root `CLAUDE.md`)
 - `windows/Tailshare.Hub/`: the hub, over Core, and its deploy files. Invariants: **only the hub's registry store writes `registry.json`; the hub never writes anything else, and never receives files.** Owned by the laptop's checkout.
