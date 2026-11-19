@@ -31,7 +31,7 @@ public enum Notices {
         // Names here come from a peer and are shown before anything is saved; show the form that
         // would be written, which has no control characters or path parts.
         let name = Names.sanitize(o.name)
-        let size = formatSize(o.totalSize)
+        let size = formatSize(o.shownSize)
         if o.items > 1 { return "\(name) and \(o.items - 1) more, \(size)" }
         if o.kind == .bundle && o.isFolder { return "\(name) (folder), \(size)" }
         return "\(name), \(size)"
@@ -70,5 +70,8 @@ public enum Notices {
     public static func declined(by device: String) -> Notice { Notice(title: device + " declined", body: "") }
     public static func noResponse(from device: String) -> Notice { Notice(title: device + " didn't respond", body: "") }
     public static func failed(to device: String) -> Notice { Notice(title: "Couldn't send to " + device, body: "") }
+    public static func waitingForPickup(device: String) -> String { "Waiting for \(device) to pick up" }
+    public static func pickedUp(by device: String) -> Notice { Notice(title: "Picked up by " + device, body: "") }
+    public static func notPickedUp(by device: String) -> Notice { Notice(title: "Not picked up by " + device, body: "") }
     public static func portInUse(_ port: Int) -> Notice { Notice(title: "Can't receive: port \(port) is in use", body: "") }
 }

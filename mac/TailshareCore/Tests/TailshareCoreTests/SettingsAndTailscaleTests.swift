@@ -48,8 +48,32 @@ final class SettingsTests: XCTestCase {
         XCTAssertEqual(loaded.value.blocked, [Identity(id: "b1", name: "bad-box")])
 
         let json = try JSONSerialization.jsonObject(with: Data(contentsOf: url)) as! [String: Any]
-        XCTAssertEqual(Set(json.keys), ["receiveFolder", "port", "trusted", "blocked"])
+        // spec E: the file gains `hub`, carried through like every other key.
+        XCTAssertEqual(Set(json.keys), ["receiveFolder", "port", "trusted", "blocked", "hub"])
         XCTAssertEqual((json["trusted"] as! [[String: String]]), [["id": senderIdentity.id, "name": senderIdentity.name]])
+    }
+
+    // spec E Tests/Settings: `hub` null, absent and "" all mean automatic; a set value is the setting, trimmed.
+    func testHubSettingForms() throws {
+        for json in [#"{"hub": null}"#, #"{}"#, #"{"hub": ""}"#, #"{"hub": "  "}"#] {
+            let (s, _) = try store(json)
+            XCTAssertNil(s.load().value.hubSetting, json)
+        }
+        let (s, _) = try store(#"{"hub": " home-box "}"#)
+        XCTAssertEqual(s.load().value.hubSetting, "home-box")
+    }
+
+    // spec E Tests/Settings: an Accept rewrites the file with `hub` exactly as it was.
+    func testAcceptKeepsHub() throws {
+        let (s, url) = try store(#"{"hub": "100.100.1.2"}"#)
+        XCTAssertTrue(s.addTrusted(senderIdentity))
+        let json = try JSONSerialization.jsonObject(with: Data(contentsOf: url)) as! [String: Any]
+        XCTAssertEqual(json["hub"] as? String, "100.100.1.2")
+
+        let (s2, url2) = try store(#"{"hub": ""}"#)
+        XCTAssertTrue(s2.addTrusted(senderIdentity))
+        let json2 = try JSONSerialization.jsonObject(with: Data(contentsOf: url2)) as! [String: Any]
+        XCTAssertEqual(json2["hub"] as? String, "")
     }
 
     // spec B Tests/Trust: a fresh file lists every key, with explicit nulls, so a person editing it sees them all.

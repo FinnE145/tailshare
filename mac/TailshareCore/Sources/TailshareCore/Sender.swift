@@ -14,15 +14,27 @@ public struct SendProgress: Sendable {
     public var bytesTotal: Int64
 }
 
-public enum SendOutcome: Equatable, Sendable { case sent, declined, didntRespond, failed, cancelled }
+/// `pickedUp` and `notPickedUp` are the ends of a hold for a phone or iPad (`PickupHolds`), never of a send to a computer.
+public enum SendOutcome: Equatable, Sendable { case sent, declined, didntRespond, failed, cancelled, pickedUp, notPickedUp }
 
 public final class Sender: @unchecked Sendable {
     private let session: URLSession
     private let port: Int
     private let offerTimeout: TimeInterval
     private let helloTimeout: TimeInterval
+    private let devicesTimeout: TimeInterval
+    /// Per-address ports, for tests: a peer listed here is reached on loopback at that port, since only the port tells the test peers apart.
+    private let portOverrides: [String: Int]
 
-    public init(port: Int = Wire.defaultPort, offerTimeout: TimeInterval = Wire.offerTimeout, helloTimeout: TimeInterval = Wire.helloTimeout) {
+    public convenience init(port: Int = Wire.defaultPort, offerTimeout: TimeInterval = Wire.offerTimeout, helloTimeout: TimeInterval = Wire.helloTimeout,
+                            devicesTimeout: TimeInterval = Wire.devicesTimeout) {
+        self.init(port: port, offerTimeout: offerTimeout, helloTimeout: helloTimeout, devicesTimeout: devicesTimeout, portOverrides: [:])
+    }
+
+    init(port: Int, offerTimeout: TimeInterval = Wire.offerTimeout, helloTimeout: TimeInterval = Wire.helloTimeout,
+         devicesTimeout: TimeInterval = Wire.devicesTimeout, portOverrides: [String: Int]) {
+        self.devicesTimeout = devicesTimeout
+        self.portOverrides = portOverrides
         self.port = port
         self.offerTimeout = offerTimeout
         self.helloTimeout = helloTimeout
@@ -39,31 +51,87 @@ public final class Sender: @unchecked Sendable {
 
     deinit { session.invalidateAndCancel() }
 
-    private func url(_ peer: PeerInfo, _ path: String) -> URL { URL(string: "http://\(peer.ip):\(port)\(path)")! }
+    private func url(_ ip: String, _ path: String) -> URL {
+        if let overridden = portOverrides[ip] { return URL(string: "http://127.0.0.1:\(overridden)\(path)")! }
+        return URL(string: "http://\(ip):\(port)\(path)")!
+    }
+    private func url(_ peer: PeerInfo, _ path: String) -> URL { url(peer.ip, path) }
 
-    /// The online peers that answer `hello` as tailshare protocol 1, probed in parallel.
+    /// The online peers that answer `hello` as tailshare protocol 1 and are not hubs, probed in parallel.
     public func discover(_ status: TailnetStatus) async -> [PeerInfo] {
-        await withTaskGroup(of: PeerInfo?.self) { group in
+        await probe(status).computers
+    }
+
+    /// Computers (as `discover`), plus the phones and iPads the hub lists. The hub is the `hub` setting when it names one,
+    /// otherwise the first peer that answered `hello` with `hub: true`; one that is down or slow costs only the mobiles.
+    public func discoverDevices(_ status: TailnetStatus, hubSetting: String?) async -> [PeerInfo] {
+        let found = await probe(status)
+        guard let hubAddress = Self.hubAddress(setting: hubSetting, status: status, answered: found.hubs) else { return found.computers }
+
+        let mobiles = await mobiles(fromHubAt: hubAddress)
+        let listed = Set(found.computers.map(\.identity.id))
+        let extra = mobiles.filter { !listed.contains($0.identity.id) }
+        return found.computers + extra
+    }
+
+    /// Which address to ask for the list of phones. With a setting: that machine name's address, or the IPv4 itself.
+    static func hubAddress(setting: String?, status: TailnetStatus, answered hubs: [PeerInfo]) -> String? {
+        if let named = setting?.trimmingCharacters(in: .whitespaces), !named.isEmpty {
+            if TailscaleJSON.isTailnetIPv4(named) { return named }
+            return status.peers.first { $0.identity.name.caseInsensitiveCompare(named) == .orderedSame }?.ip
+        }
+        return hubs.first?.ip
+    }
+
+    private struct Probed { var computers: [PeerInfo]; var hubs: [PeerInfo] }
+
+    private func probe(_ status: TailnetStatus) async -> Probed {
+        await withTaskGroup(of: (PeerInfo, HelloResponse)?.self) { group in
             for peer in status.peers where peer.online {
-                group.addTask { await self.isTailshare(peer) ? peer : nil }
+                group.addTask { await self.hello(peer).map { (peer, $0) } }
             }
-            var found: [PeerInfo] = []
-            for await peer in group { if let peer { found.append(peer) } }
-            return found.sorted { $0.identity.name.localizedCaseInsensitiveCompare($1.identity.name) == .orderedAscending }
+            var computers: [PeerInfo] = []
+            var hubs: [PeerInfo] = []
+            for await answer in group {
+                guard let (peer, hello) = answer, hello.app == Wire.appName, hello.protocol == Wire.version else { continue }
+                if hello.isHub { hubs.append(peer) } else { computers.append(peer) }
+            }
+            let byName: (PeerInfo, PeerInfo) -> Bool = { $0.identity.name.localizedCaseInsensitiveCompare($1.identity.name) == .orderedAscending }
+            return Probed(computers: computers.sorted(by: byName), hubs: hubs.sorted(by: byName))
         }
     }
 
-    private func isTailshare(_ peer: PeerInfo) async -> Bool {
-        var request = URLRequest(url: url(peer, "/v1/hello"))
+    private func hello(_ peer: PeerInfo) async -> HelloResponse? {
+        var request = URLRequest(url: url(peer.ip, "/v1/hello"))
         request.timeoutInterval = helloTimeout
         guard let (data, response) = try? await session.data(for: request),
+              (response as? HTTPURLResponse)?.statusCode == 200
+        else { return nil }
+        return try? JSONDecoder().decode(HelloResponse.self, from: data)
+    }
+
+    private struct HubDevices: Decodable {
+        struct Mobile: Decodable { var name: String; var id: String }
+        var mobiles: [Mobile]
+    }
+
+    private func mobiles(fromHubAt address: String) async -> [PeerInfo] {
+        var request = URLRequest(url: url(address, "/v1/devices"))
+        request.timeoutInterval = devicesTimeout
+        guard let (data, response) = try? await session.data(for: request),
               (response as? HTTPURLResponse)?.statusCode == 200,
-              let hello = try? JSONDecoder().decode(HelloResponse.self, from: data)
-        else { return false }
-        return hello.app == Wire.appName && hello.protocol == Wire.version
+              let list = try? JSONDecoder().decode(HubDevices.self, from: data)
+        else { return [] }
+        return list.mobiles
+            .filter { !$0.id.isEmpty && !$0.name.isEmpty }
+            .map { PeerInfo(identity: Identity(id: $0.id, name: $0.name), ip: "", online: true, isMobile: true) }
+            .sorted { $0.identity.name.localizedCaseInsensitiveCompare($1.identity.name) == .orderedAscending }
     }
 
     public func send(to peer: PeerInfo, content: SendContent, progress: (@Sendable (SendProgress) -> Void)? = nil) async -> SendOutcome {
+        // A phone or iPad has no address: it is sent to by holding the item (`PickupHolds`).
+        if peer.isMobile { return .failed }
+
         var zipURL: URL?
         defer { if let zipURL { try? FileManager.default.removeItem(at: zipURL) } }
 
@@ -94,7 +162,7 @@ public final class Sender: @unchecked Sendable {
                 }
             }
 
-            progress?(SendProgress(stage: .waiting, bytesSent: 0, bytesTotal: offer.bytes))
+            progress?(SendProgress(stage: .waiting, bytesSent: 0, bytesTotal: offer.progressTotal))
             switch try await requestToken(peer, offer) {
             case .outcome(let outcome): return outcome
             case .token(let token): return try await upload(peer, token, offer, source, progress)
@@ -150,8 +218,8 @@ public final class Sender: @unchecked Sendable {
         // Set on an upload from a file or data by URLSession itself, which sends no "Expect: 100-continue".
         request.timeoutInterval = 24 * 3600
 
-        let reporter = ProgressReporter(total: offer.bytes, report: progress)
-        progress?(SendProgress(stage: .sending, bytesSent: 0, bytesTotal: offer.bytes))
+        let reporter = ProgressReporter(total: offer.progressTotal, report: progress)
+        progress?(SendProgress(stage: .sending, bytesSent: 0, bytesTotal: offer.progressTotal))
 
         let response: URLResponse
         switch source {

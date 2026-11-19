@@ -5,8 +5,11 @@ public struct Settings: Equatable, Sendable {
     public var port: Int?
     public var trusted: [Identity]
     public var blocked: [Identity]
+    /// A Tailscale machine name or IPv4 that overrides finding the hub automatically (spec E). Only a person edits it.
+    public var hub: String?
 
-    public init(receiveFolder: String? = nil, port: Int? = nil, trusted: [Identity] = [], blocked: [Identity] = []) {
+    public init(receiveFolder: String? = nil, port: Int? = nil, trusted: [Identity] = [], blocked: [Identity] = [], hub: String? = nil) {
+        self.hub = hub
         self.receiveFolder = receiveFolder
         self.port = port
         self.trusted = trusted
@@ -17,6 +20,12 @@ public struct Settings: Equatable, Sendable {
     public var effectivePort: Int {
         if let port, (1024...65535).contains(port) { return port }
         return Wire.defaultPort
+    }
+
+    /// The hub to use instead of the one found by `hello`; null, absent and "" all mean "find it".
+    public var hubSetting: String? {
+        let trimmed = hub?.trimmingCharacters(in: .whitespaces) ?? ""
+        return trimmed.isEmpty ? nil : trimmed
     }
 
     public func isTrusted(_ id: String) -> Bool { trusted.contains { $0.id == id } }
@@ -40,8 +49,10 @@ private struct SettingsFile: Codable {
     var port: Int?
     var trusted: [Entry?]?
     var blocked: [Entry?]?
+    var hub: String?
 
     init(_ s: Settings) {
+        hub = s.hub
         receiveFolder = s.receiveFolder
         port = s.port
         trusted = s.trusted.map { Entry(id: $0.id, name: $0.name) }
@@ -52,10 +63,10 @@ private struct SettingsFile: Codable {
         func identities(_ list: [Entry?]?) -> [Identity] {
             (list ?? []).compactMap { e in e?.id.map { Identity(id: $0, name: e?.name ?? "") } }
         }
-        return Settings(receiveFolder: receiveFolder, port: port, trusted: identities(trusted), blocked: identities(blocked))
+        return Settings(receiveFolder: receiveFolder, port: port, trusted: identities(trusted), blocked: identities(blocked), hub: hub)
     }
 
-    enum CodingKeys: String, CodingKey { case receiveFolder, port, trusted, blocked }
+    enum CodingKeys: String, CodingKey { case receiveFolder, port, trusted, blocked, hub }
 
     // Written with explicit nulls, so a person editing the file can see every key there is.
     func encode(to encoder: Encoder) throws {
@@ -64,6 +75,8 @@ private struct SettingsFile: Codable {
         if let port { try c.encode(port, forKey: .port) } else { try c.encodeNil(forKey: .port) }
         try c.encode(trusted ?? [], forKey: .trusted)
         try c.encode(blocked ?? [], forKey: .blocked)
+        // Never written by the app, only carried through, so an Accept leaves it as the person set it.
+        if let hub { try c.encode(hub, forKey: .hub) } else { try c.encodeNil(forKey: .hub) }
     }
 }
 

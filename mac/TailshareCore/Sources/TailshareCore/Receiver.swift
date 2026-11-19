@@ -35,9 +35,13 @@ public struct ReceiverOptions: Sendable {
     public var defaultReceiveFolder: URL
     public var promptTimeout: TimeInterval
     public var tokenLifetime: TimeInterval
+    /// Items held for phones and iPads to pick up. Shared across the receiver's rebinds: a hold outlives a changed address.
+    public var holds: PickupHolds
 
     public init(settings: SettingsStore, tailscale: Tailscale, host: ReceiverHost, defaultReceiveFolder: URL,
-                promptTimeout: TimeInterval = Wire.promptTimeout, tokenLifetime: TimeInterval = Wire.tokenLifetime) {
+                promptTimeout: TimeInterval = Wire.promptTimeout, tokenLifetime: TimeInterval = Wire.tokenLifetime,
+                holds: PickupHolds = PickupHolds()) {
+        self.holds = holds
         self.settings = settings
         self.tailscale = tailscale
         self.host = host
@@ -84,7 +88,7 @@ private final class Signal: @unchecked Sendable {
 }
 
 /// Resumes its continuation with the first result offered; later ones are dropped.
-private final class Race<T: Sendable>: @unchecked Sendable {
+final class Race<T: Sendable>: @unchecked Sendable {
     private let lock = NSLock()
     private var continuation: CheckedContinuation<T, Never>?
     private var result: T?
@@ -142,7 +146,7 @@ func base64URL(_ data: Data) -> String {
 }
 
 public final class Receiver: @unchecked Sendable {
-    private let o: ReceiverOptions
+    let o: ReceiverOptions
     private let tokens = Tokens()
     private var serverTask: Task<Void, Never>?
 
@@ -157,6 +161,8 @@ public final class Receiver: @unchecked Sendable {
         router.get("v1/hello") { [self] _, context in await hello(context) }
         router.post("v1/offer") { [self] request, context in await offer(request, context) }
         router.put("v1/upload/:token") { [self] request, context in await upload(request, context) }
+        router.get("v1/pickup") { [self] _, context in await pickupList(context) }
+        router.get("v1/pickup/:token") { [self] _, context in await pickupFetch(context) }
 
         // Resolves once with the bound port, or with the reason the server never came up.
         let started = Race<Result<Int, Error>>()
@@ -193,25 +199,25 @@ public final class Receiver: @unchecked Sendable {
     // MARK: Requests
 
     // Every request starts here: who is on the other end, according to Tailscale.
-    private func who(_ context: TailshareContext) async -> Identity? {
+    func who(_ context: TailshareContext) async -> Identity? {
         guard let ip = context.remoteIP else { return nil }
         return await o.tailscale.whois(ip: ip)
     }
 
-    private static func status(_ code: Int) -> Response { Response(status: .init(code: code)) }
+    static func status(_ code: Int) -> Response { Response(status: .init(code: code)) }
 
-    private static func json<T: Encodable>(_ value: T, status: Int = 200) -> Response {
+    static func json<T: Encodable>(_ value: T, status: Int = 200) -> Response {
         let data = (try? JSONEncoder().encode(value)) ?? Data()
         var headers = HTTPFields()
         headers[.contentType] = "application/json"
         return Response(status: .init(code: status), headers: headers, body: .init(byteBuffer: ByteBuffer(data: data)))
     }
 
-    private static func error(_ status: Int, _ error: String) -> Response { json(ErrorResponse(error: error), status: status) }
+    static func error(_ status: Int, _ error: String) -> Response { json(ErrorResponse(error: error), status: status) }
 
     private func hello(_ context: TailshareContext) async -> Response {
         if await who(context) == nil { return Self.status(403) }
-        return Self.json(HelloResponse(app: Wire.appName, protocol: Wire.version))
+        return Self.json(HelloResponse(app: Wire.appName, protocol: Wire.version, hub: nil))
     }
 
     private func offer(_ request: Request, _ context: TailshareContext) async -> Response {
@@ -239,7 +245,7 @@ public final class Receiver: @unchecked Sendable {
         // Read fresh: the file is hand-edited and edits apply to the next offer.
         let settings = o.settings.load().value
         if settings.isBlocked(sender.id) { return Self.error(403, "blocked") }
-        if offer.kind == .text && offer.bytes > Wire.textLimitBytes { return Self.status(413) }
+        if offer.kind == .text, let bytes = offer.bytes, bytes > Wire.textLimitBytes { return Self.status(413) }
 
         if !settings.isTrusted(sender.id) {
             enum Answer: Sendable { case accepted, declined, timeout }
@@ -272,8 +278,11 @@ public final class Receiver: @unchecked Sendable {
         guard let sender = await who(context) else { return Self.status(403) }
         guard let token = context.parameters.get("token"), let offer = tokens.redeem(token, senderID: sender.id) else { return Self.status(403) }
 
-        // Required to equal the offer's bytes. A missing one (chunked) is just as wrong.
-        guard let length = request.headers[.contentLength].flatMap({ Int64($0) }), length == offer.bytes else { return Self.status(400) }
+        // An offer that declared `bytes` requires a Content-Length equal to it; a missing one (chunked) is just as wrong.
+        // An offer without `bytes` takes whatever arrives.
+        if let declared = offer.bytes {
+            guard let length = request.headers[.contentLength].flatMap({ Int64($0) }), length == declared else { return Self.status(400) }
+        }
 
         return offer.kind == .text
             ? await receiveText(request, sender, offer)
@@ -283,11 +292,15 @@ public final class Receiver: @unchecked Sendable {
     private func receiveText(_ request: Request, _ sender: Identity, _ offer: Offer) async -> Response {
         var data = Data()
         do {
-            for try await chunk in request.body { data.append(contentsOf: chunk.readableBytesView) }
+            for try await chunk in request.body {
+                data.append(contentsOf: chunk.readableBytesView)
+                // Without a declared length nothing else bounds the body; with one it already equals what the offer was checked for.
+                if Int64(data.count) > Wire.textLimitBytes { return Self.status(413) }
+            }
         } catch {
             return Self.status(400)
         }
-        guard Int64(data.count) == offer.bytes, let text = String(data: data, encoding: .utf8) else { return Self.status(400) }
+        guard offer.bytes.map({ Int64(data.count) == $0 }) ?? true, let text = String(data: data, encoding: .utf8) else { return Self.status(400) }
 
         o.host.received(from: sender, offer: offer, item: ReceivedItem(urls: [], text: text))
         return Self.json(["ok": true])
@@ -314,7 +327,7 @@ public final class Receiver: @unchecked Sendable {
             }
 
             if offer.kind == .bundle {
-                placed = try Bundles.extract(zipURL: partURL, into: folder, totalSize: offer.totalSize, isCancelled: { incoming.isCancelled || Task.isCancelled })
+                placed = try Bundles.extract(zipURL: partURL, into: folder, totalSize: offer.extractionCap, isCancelled: { incoming.isCancelled || Task.isCancelled })
                 Placement.delete(partURL)
             } else {
                 placed = [try Placement.placeFile(in: folder, rawName: offer.name!, from: partURL)]
@@ -333,14 +346,14 @@ public final class Receiver: @unchecked Sendable {
 
     // The upload handler has already required Content-Length to equal the offer's bytes; the count
     // here is the second check, for a body that ends early without an error.
-    private func copy(_ body: RequestBody, to handle: FileHandle, expected: Int64, incoming: IncomingTransfer) async throws {
+    private func copy(_ body: RequestBody, to handle: FileHandle, expected: Int64?, incoming: IncomingTransfer) async throws {
         var total: Int64 = 0
         var lastReport = Date.distantPast
 
         for try await chunk in body {
             if incoming.isCancelled { throw CancellationError() }
             total += Int64(chunk.readableBytes)
-            if total > expected { throw BundleError(reason: "body longer than offered") }
+            if let expected, total > expected { throw BundleError(reason: "body longer than offered") }
             try handle.write(contentsOf: Data(chunk.readableBytesView))
 
             let now = Date()
@@ -350,7 +363,7 @@ public final class Receiver: @unchecked Sendable {
             }
         }
         if incoming.isCancelled { throw CancellationError() }
-        if total != expected { throw BundleError(reason: "body shorter than offered") }
+        if let expected, total != expected { throw BundleError(reason: "body shorter than offered") }
         incoming.progress(bytesReceived: total)
     }
 

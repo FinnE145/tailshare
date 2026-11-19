@@ -14,6 +14,8 @@ public enum NodeState: Equatable, Sendable {
 public actor Node {
     private let tailscale: Tailscale
     private let settings: SettingsStore
+    /// Items held for phones and iPads; shared with every receiver this node binds.
+    public nonisolated let holds: PickupHolds
     private let options: ReceiverOptions
     private let onChange: @Sendable (NodeState) -> Void
 
@@ -26,6 +28,7 @@ public actor Node {
         self.options = options
         tailscale = options.tailscale
         settings = options.settings
+        holds = options.holds
         self.onChange = onChange
     }
 

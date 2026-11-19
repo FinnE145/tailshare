@@ -5,11 +5,14 @@ public struct PeerInfo: Equatable, Sendable {
     public var identity: Identity
     public var ip: String
     public var online: Bool
+    /// A phone or iPad the hub listed: it has no address (`ip` is empty) and is sent to by holding the item for it.
+    public var isMobile: Bool
 
-    public init(identity: Identity, ip: String, online: Bool) {
+    public init(identity: Identity, ip: String, online: Bool, isMobile: Bool = false) {
         self.identity = identity
         self.ip = ip
         self.online = online
+        self.isMobile = isMobile
     }
 }
 
