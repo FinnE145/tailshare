@@ -1,0 +1,18 @@
+name: tailshare-hub
+
+services:
+  hub:
+    build:
+      context: ../..
+      dockerfile: Tailshare.Hub/deploy/Dockerfile
+    # The host network, so the hub can bind the host's Tailscale address. It finds that address
+    # from Tailscale at runtime and listens on nothing else, so no address is written here.
+    network_mode: host
+    user: "2003:2003"
+    restart: unless-stopped
+    volumes:
+      # The registry of phones and iPads: the one place the hub writes.
+      - ${HUB_DATA:-./data}:/data
+      # Read-only access to the host's Tailscale, for whois and status.
+      - /var/run/tailscale/tailscaled.sock:/var/run/tailscale/tailscaled.sock:ro
+      - /usr/bin/tailscale:/usr/bin/tailscale:ro

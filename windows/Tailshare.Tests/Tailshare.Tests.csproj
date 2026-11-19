@@ -15,6 +15,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\Tailshare.Core\Tailshare.Core.csproj" />
+    <ProjectReference Include="..\Tailshare.Hub\Tailshare.Hub.csproj" />
   </ItemGroup>
 
   <ItemGroup>
