@@ -86,7 +86,7 @@ A computer holds an item for one device, identified by its `StableID` (from the 
 
 ### Hub endpoints
 - `GET /v1/devices` → `200 {"computers":[{"name":"…","address":"100.x.y.z"}],"mobiles":[{"name":"…","id":"<StableID>"}]}`:
-  - `computers`: online peers (from the hub's `tailscale status`) that answer `hello` with `protocol: 1` within 2 seconds and are not hubs, probed in parallel like an app's device list. `address` is the peer's Tailscale IPv4.
+  - `computers`: online peers (from the hub's `tailscale status`) that answered `hello` with `protocol: 1` within 2 seconds and are not hubs, probed in parallel like an app's device list. **A request never probes: the hub probes in the background every 10 seconds (and once before it starts listening) and answers from the last result, dropping at once any device `tailscale status` now shows offline.** A request that probed itself took a whole hello timeout whenever one computer didn't answer (found 2026-11-19). `address` is the peer's Tailscale IPv4.
   - `mobiles`: registered devices that `tailscale status` shows online right now.
   - The caller itself is never in either list.
   - Names are Tailscale machine names, as in A.
@@ -113,7 +113,7 @@ Finn opens a session on the server, which clones the repo and reads this section
 
 ## Apps: the `hub` setting and the device list
 - **Settings file** (both apps) gains `hub`: null, absent or `""` = find the hub automatically; otherwise a Tailscale machine name or a Tailscale IPv4. Read fresh on every refresh. **Never written by the app**, and kept as it is whenever the settings store writes the file (on Accept).
-- **Refresh** (popup and share window, both apps): discover computers as before. The `hello` probe already reaches every online peer, so a hub is found in the same pass, at no extra cost. With `hub` set, that device is the hub instead. With several hubs and no setting, the first by name. If there's a hub, ask it `GET /v1/devices` and add its `mobiles`, excluding any device already listed. If there's no hub or it doesn't answer within 5 seconds, the list simply has no phones or iPads, with no error shown. (Not 2: the hub probes its peers before answering, and each one that doesn't answer costs it a 2 second hello timeout, so a 2 second wait lost every phone whenever one computer was off. Found 2026-11-19; the Mac app must wait 5 seconds too.)
+- **Refresh** (popup and share window, both apps): discover computers as before. The `hello` probe already reaches every online peer, so a hub is found in the same pass, at no extra cost. With `hub` set, that device is the hub instead. With several hubs and no setting, the first by name. If there's a hub, ask it `GET /v1/devices` and add its `mobiles`, excluding any device already listed. If there's no hub or it doesn't answer within 5 seconds, the list simply has no phones or iPads, with no error shown. (Not 2: the hub used to probe its peers inside the request, so a silent computer made it take a full 2 second hello timeout and a 2 second wait lost every phone. The hub now answers from a cache, but the wait stays 5 as margin. Found 2026-11-19; the Mac app must wait 5 seconds too.)
 - **Mobile rows** carry a phone icon (SF Symbol `iphone` on the Mac, Segoe Fluent Icons `CellPhone` on Windows) beside the name. The button still reads `Send to <device>`.
 
 ## Apps: sending to a phone or iPad

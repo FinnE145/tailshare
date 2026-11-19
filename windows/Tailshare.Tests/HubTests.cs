@@ -20,7 +20,7 @@ internal sealed class HubRig : IAsyncDisposable
 
     private HubRig() => Registry = new RegistryStore(_dir.Combine("data", "registry.json"));
 
-    public static async Task<HubRig> StartAsync()
+    public static async Task<HubRig> StartAsync(TimeSpan? probeInterval = null)
     {
         var rig = new HubRig();
         rig.Server = new HubServer(new HubOptions
@@ -29,6 +29,8 @@ internal sealed class HubRig : IAsyncDisposable
             Registry = rig.Registry,
             PeerPort = rig.Net.Port,
             HelloTimeout = TimeSpan.FromMilliseconds(500),
+            // Long by default: tests probe by hand (ShowAsync) so what they see doesn't depend on a timer.
+            ProbeInterval = probeInterval ?? TimeSpan.FromMinutes(10),
             Log = line => { lock (rig.Log) rig.Log.Add(line); },
         });
         await rig.Server.StartAsync(IPAddress.Loopback, 0);
@@ -39,7 +41,12 @@ internal sealed class HubRig : IAsyncDisposable
 
     public Uri Url(string path) => new($"http://127.0.0.1:{Server.Port}{path}");
 
-    public void Show(params PeerInfo[] peers) => Tailscale.Status = Tailnet.Status(peers);
+    /// <summary>Tailscale now shows these peers, and the hub has probed them.</summary>
+    public async Task ShowAsync(params PeerInfo[] peers)
+    {
+        Tailscale.Status = Tailnet.Status(peers);
+        await Server.ProbeNowAsync();
+    }
 
     public async Task<(HttpStatusCode Status, string Body)> Send(HttpMethod method, string path)
     {
@@ -136,7 +143,7 @@ public class HubTests
         await using var rig = await HubRig.StartAsync();
         var other = PhonePeer("node-ipad", "ipad", 7);
         rig.Registry.Register(new Identity("node-ipad", "ipad"));
-        rig.Show(other, PhonePeer("node-phone", "pixel", 8));
+        await rig.ShowAsync(other, PhonePeer("node-phone", "pixel", 8));
         rig.Tailscale.Who = Phone;
 
         var (status, registered) = await rig.Register();
@@ -157,7 +164,7 @@ public class HubTests
         rig.Registry.Register(new Identity("node-ipad", "old-name"));
         rig.Registry.Register(new Identity("node-offline", "asleep"));
         rig.Registry.Register(Phone);
-        rig.Show(
+        await rig.ShowAsync(
             PhonePeer("node-ipad", "ipad", 1),
             PhonePeer("node-offline", "asleep", 2, online: false),
             PhonePeer("node-phone", "pixel", 3),
@@ -174,7 +181,7 @@ public class HubTests
     {
         await using var rig = await HubRig.StartAsync();
         rig.Registry.Register(new Identity("node-ipad", "ipad"));
-        rig.Show(PhonePeer("node-ipad", "ipad", 1));
+        await rig.ShowAsync(PhonePeer("node-ipad", "ipad", 1));
         Assert.Single(HubRig.Parse((await rig.Get("/v1/devices")).Body).Mobiles!);
 
         File.WriteAllText(rig.Registry.FilePath, """{"devices":[]}""");
@@ -193,12 +200,66 @@ public class HubTests
         var asleep = rig.Net.Add("c-off", "asleep", 5, AppHello, online: false);
         var silent = new PeerInfo(new Identity("c-gone", "gone"), IPAddress.Parse("127.0.0.6"), true);
         var caller = rig.Net.Add("c-me", "me", 7, AppHello);
-        rig.Show(b, a, future, hub, asleep, silent, caller);
+        await rig.ShowAsync(b, a, future, hub, asleep, silent, caller);
         rig.Tailscale.Who = caller.Identity;
 
         var (_, body) = await rig.Get("/v1/devices");
 
         Assert.Equal([new HubComputer("a-laptop", "127.0.0.2"), new HubComputer("b-desk", "127.0.0.1")], HubRig.Parse(body).Computers);
+    }
+
+    [Fact] // a request reads the last probe and never probes: a computer that appeared since is not listed until the next probe
+    public async Task Computers_come_from_the_last_probe_not_from_the_request()
+    {
+        await using var rig = await HubRig.StartAsync();
+        var a = rig.Net.Add("c-a", "a-laptop", 1, AppHello);
+        var b = rig.Net.Add("c-b", "b-desk", 2, AppHello);
+        var caller = rig.Net.Add("c-me", "me", 7, AppHello);
+        rig.Tailscale.Who = caller.Identity;
+        await rig.ShowAsync(a, caller);
+
+        rig.Tailscale.Status = Tailnet.Status(a, b, caller);
+        var before = HubRig.Parse((await rig.Get("/v1/devices")).Body).Computers;
+        await rig.Server.ProbeNowAsync();
+        var after = HubRig.Parse((await rig.Get("/v1/devices")).Body).Computers;
+
+        Assert.Equal([new HubComputer("a-laptop", "127.0.0.1")], before);
+        Assert.Equal([new HubComputer("a-laptop", "127.0.0.1"), new HubComputer("b-desk", "127.0.0.2")], after);
+    }
+
+    [Fact] // a computer Tailscale shows offline drops out at once, without waiting for the next probe
+    public async Task A_computer_that_goes_offline_drops_out_before_the_next_probe()
+    {
+        await using var rig = await HubRig.StartAsync();
+        var a = rig.Net.Add("c-a", "a-laptop", 1, AppHello);
+        var caller = rig.Net.Add("c-me", "me", 7, AppHello);
+        rig.Tailscale.Who = caller.Identity;
+        await rig.ShowAsync(a, caller);
+
+        rig.Tailscale.Status = Tailnet.Status(a with { Online = false }, caller);
+
+        Assert.Empty(HubRig.Parse((await rig.Get("/v1/devices")).Body).Computers);
+    }
+
+    [Fact] // the background loop keeps the list current on its own
+    public async Task The_background_probe_picks_up_a_new_computer()
+    {
+        await using var rig = await HubRig.StartAsync(TimeSpan.FromMilliseconds(100));
+        var a = rig.Net.Add("c-a", "a-laptop", 1, AppHello);
+        var caller = rig.Net.Add("c-me", "me", 7, AppHello);
+        rig.Tailscale.Who = caller.Identity;
+
+        rig.Tailscale.Status = Tailnet.Status(a, caller);
+
+        var deadline = DateTime.UtcNow.AddSeconds(10);
+        IReadOnlyList<HubComputer> computers;
+        do
+        {
+            computers = HubRig.Parse((await rig.Get("/v1/devices")).Body).Computers;
+            if (computers.Count == 0) await Task.Delay(50);
+        } while (computers.Count == 0 && DateTime.UtcNow < deadline);
+
+        Assert.Equal([new HubComputer("a-laptop", "127.0.0.1")], computers);
     }
 
     [Fact] // spec GET /v1/devices: Tailscale down means nothing to list, not an error
@@ -253,7 +314,7 @@ public class HubTests
         await using var rig = await HubRig.StartAsync();
         Directory.CreateDirectory(rig.DataDir);
         File.WriteAllText(rig.Registry.FilePath, "{ not json");
-        rig.Show(PhonePeer("node-ipad", "ipad", 1));
+        await rig.ShowAsync(PhonePeer("node-ipad", "ipad", 1));
         rig.Tailscale.Who = Phone;
 
         var (listStatus, list) = await rig.Get("/v1/devices");
