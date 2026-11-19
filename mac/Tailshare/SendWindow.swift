@@ -43,15 +43,9 @@ final class SendWindowController: NSObject, NSWindowDelegate {
         let content: SendContent
         if let text { content = .text(text) } else { content = .paths(files ?? []) }
         let name = peer.identity.name
-        send.start(to: peer, content: content, sender: model.node.makeSender()) { [weak self] outcome in
+        send.start(to: peer, content: content, sender: model.node.makeSender(), holds: model.node.holds) { [weak self] outcome in
             guard let self else { return }
-            switch outcome {
-            case .sent: self.notifier.post(Notices.sent(to: name))
-            case .declined: self.notifier.post(Notices.declined(by: name))
-            case .didntRespond: self.notifier.post(Notices.noResponse(from: name))
-            case .failed: self.notifier.post(Notices.failed(to: name))
-            case .cancelled: break
-            }
+            self.notifier.postSendResult(outcome, device: name)
             self.window?.delegate = nil
             self.window?.close()
             self.window = nil
@@ -116,7 +110,7 @@ private struct SendWindowView: View {
                 .buttonStyle(.borderedProminent)
                 .controlSize(.large)
                 .keyboardShortcut(.defaultAction)
-                .disabled(selected == nil || nothingToSend || send.isBusy)
+                .disabled(selected == nil || nothingToSend || send.canCancel)
             }
         }
         .padding(20)

@@ -32,6 +32,19 @@ final class Notifier: NSObject, UNUserNotificationCenterDelegate, @unchecked Sen
 
     func post(_ notice: Notice) { add(notice, category: nil, userInfo: [:]) }
 
+    /// The notification a finished send ends in; a cancelled one raises none.
+    func postSendResult(_ outcome: SendOutcome, device: String) {
+        switch outcome {
+        case .sent: post(Notices.sent(to: device))
+        case .declined: post(Notices.declined(by: device))
+        case .didntRespond: post(Notices.noResponse(from: device))
+        case .failed: post(Notices.failed(to: device))
+        case .pickedUp: post(Notices.pickedUp(by: device))
+        case .notPickedUp: post(Notices.notPickedUp(by: device))
+        case .cancelled: break
+        }
+    }
+
     func postReceivedFiles(_ notice: Notice, urls: [URL]) {
         // One top-level item is revealed, several open the receive folder: both need only the paths.
         add(notice, category: Category.file, userInfo: ["paths": urls.map(\.path)])

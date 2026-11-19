@@ -17,10 +17,16 @@ struct DeviceListView: View {
                 Button {
                     Task { await model.refreshDevices(force: true) }
                 } label: {
-                    Label("Refresh", systemImage: "arrow.clockwise").labelStyle(.iconOnly)
+                    // A spinner in place of the arrow, and the button off, for as long as a refresh runs.
+                    if model.refreshing {
+                        ProgressView().controlSize(.small).frame(width: 16, height: 16)
+                    } else {
+                        Label("Refresh", systemImage: "arrow.clockwise").labelStyle(.iconOnly).frame(width: 16, height: 16)
+                    }
                 }
                 .buttonStyle(.borderless)
-                .help("Refresh")
+                .disabled(model.refreshing)
+                .help(model.refreshing ? "Refreshing" : "Refresh")
             }
 
             switch model.deviceState {
@@ -45,7 +51,7 @@ struct DeviceListView: View {
     private func row(_ peer: PeerInfo) -> some View {
         let selected = selection == peer.identity.id
         return HStack(spacing: 8) {
-            Image(systemName: "desktopcomputer").frame(width: 20).foregroundStyle(.secondary)
+            Image(systemName: peer.isMobile ? "iphone" : "desktopcomputer").frame(width: 20).foregroundStyle(.secondary)
             Text(peer.identity.name).lineLimit(1)
             Spacer()
             // The checkmark carries the selection, the tint only backs it up.
@@ -77,7 +83,7 @@ struct SendStatusView: View {
                 HStack {
                     Label(line.text, systemImage: line.symbol).lineLimit(1)
                     Spacer()
-                    if send.isBusy { Button("Cancel") { send.cancel() }.controlSize(.small) }
+                    if send.canCancel { Button("Cancel") { send.cancel() }.controlSize(.small) }
                 }
                 if let bar = send.status.fraction {
                     if let value = bar { ProgressView(value: value) } else { ProgressView().progressViewStyle(.linear) }

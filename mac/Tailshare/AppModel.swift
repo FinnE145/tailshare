@@ -26,6 +26,8 @@ final class AppModel: ObservableObject {
     @Published var text = ""
     @Published var nodeState = NodeState.starting
     @Published var receives: [ReceiveItem] = []
+    /// True while the device list is being refreshed; the refresh button shows it. A refresh can take seconds when a computer is off.
+    @Published private(set) var refreshing = false
 
     /// Set by the popup controller: the file browser hides the popup while it is open and shows it again after.
     var hidePopup: (() -> Void)?
@@ -34,7 +36,6 @@ final class AppModel: ObservableObject {
     let send = SendController()
     private(set) var node: Node!
     private let notifier: Notifier
-    private var refreshing = false
     private var lastRefresh = Date.distantPast
     private var sendWindows: [SendWindowController] = []
     private var timer: Timer?
@@ -97,7 +98,8 @@ final class AppModel: ObservableObject {
             deviceState = .tailscaleDown
             return
         }
-        let found = await node.makeSender().discover(status)
+        // The hub setting is read fresh: it is hand-edited and an edit applies to the next refresh.
+        let found = await node.makeSender().discoverDevices(status, hubSetting: AppPaths.settingsStore.load().value.hubSetting)
         devices = found
         deviceState = found.isEmpty ? .none : .list
         if !found.contains(where: { $0.identity.id == selectedID }) { selectedID = nil }
@@ -108,8 +110,12 @@ final class AppModel: ObservableObject {
     func sendFromPopup() {
         guard let peer = selectedDevice else { return }
         let content: SendContent = mode == .files ? .paths(items) : .text(text)
-        send.start(to: peer, content: content, sender: node.makeSender()) { [weak self] outcome in
-            guard let self, outcome == .sent else { return }
+        let name = peer.identity.name
+        send.start(to: peer, content: content, sender: node.makeSender(), holds: node.holds) { [weak self] outcome in
+            guard let self else { return }
+            // A computer's result is the status line; a hold ends in a notification, as the user may have left the popup.
+            if peer.isMobile { self.notifier.postSendResult(outcome, device: name) }
+            guard outcome == .sent || outcome == .pickedUp else { return }
             // What was sent is cleared; anything else stays so a retry is one click.
             self.items = []
             self.text = ""
@@ -124,7 +130,7 @@ final class AppModel: ObservableObject {
     // MARK: Receiving
 
     func beginReceive(_ incoming: IncomingState, offer: Offer, device: String) {
-        receives.append(ReceiveItem(id: incoming.id, text: Notices.progress(device: device, offer: offer), bytes: 0, total: offer.bytes, transfer: incoming))
+        receives.append(ReceiveItem(id: incoming.id, text: Notices.progress(device: device, offer: offer), bytes: 0, total: offer.progressTotal, transfer: incoming))
     }
 
     func updateReceive(_ id: UUID, bytes: Int64) {
