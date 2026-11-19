@@ -20,6 +20,20 @@ Not in this step: a tailshare CLI for headless machines (a feature idea, by Finn
 
 **B is folded in.** B's Mac app was merged into `main` without its Verify (Finn, 2026-11-18). E's Verify also checks everything `docs/specs/mac-app-B.md` promises, and records its findings in B's spec as well as this one.
 
+## Where the implementation departed
+Dated 2026-11-18, during the laptop's Implement (Core, the hub, the Windows app). Each is also fixed in line below. The server and Mac sessions read this list before the rest.
+- **Pickup listing `name` is the item's own name; a bundle's download file name adds `.zip`.** The spec's `<name>.zip` described the download only. The Shortcut can show the listing's name as is.
+- **`Content-Disposition` carries an ASCII fallback in `filename` and the real name in `filename*=UTF-8''…`** when the name isn't ASCII. Names go through the same sanitizing as received names first (a quote or control character becomes `_`). Kestrel refuses a non-ASCII header value, so a plain `filename="é.txt"` would have failed the download.
+- **A held file that is gone when it is picked up answers `404`** (the spec said only that the download fails), and the sender's hold ends `Failed`.
+- **A hold that ends `Failed` also raises a notification, `Couldn't send to <device>`.** The spec listed only picked up and not picked up; a failure with no notification would leave a closed share window with no word at all. A cancel raises none, as specced.
+- **The bundle cap is `totalSize + totalSize / 4 + 1 MiB` in integer arithmetic**, which is `totalSize × 1.25 + 1 MiB` rounded down.
+- **Device names in the hub's `computers` and `mobiles` are Tailscale's current names from `status`**, not the name stored at registration (which is kept in the file for reading). A renamed phone needs no new registration. A device that is registered but not online isn't listed, as specced.
+- **`whois` runs before routing in the hub**, so a caller Tailscale doesn't know gets `403` even for a path the hub doesn't serve; a tailnet caller gets `404` there.
+- **The hub assumes every computer listens on the default port 45611.** It has no settings file; an app whose `port` setting is changed is invisible to it.
+- **`PickupStore` (Core) is owned by the host and handed to the receiver** (`ReceiverOptions.Pickups`), so the tray app's 10-second rebind doesn't drop a hold. `HoldAsync` returns `PickedUp`, `NotPickedUp`, `Failed` or `Cancelled`; the app's controller turns it into the status line and the notification.
+- **The Windows share window sends once.** Its Send button stays off after the click, also while a hold only waits, because the window closes when the hold ends.
+- **The compose file takes its data directory from `HUB_DATA` (default `./data`)**, so the server session can point it at the stack's own `data/`. The Docker build context is `windows/` (`windows/.dockerignore` keeps `bin`/`obj` out of it). Neither file was built here: Docker isn't installed on the laptop, so the server session's build is the first.
+
 ## Decisions (Finn, 2026-11-18)
 - Shortcuts in both directions; no phone notification; a manual pull is fine.
 - A hub on the server, which is always on. A phone or iPad **registers itself the first time either Shortcut runs**, so every computer can offer it as a target without a send in the other direction first (people used to AirDrop won't put up with a two-way setup).
@@ -32,7 +46,7 @@ Not in this step: a tailshare CLI for headless machines (a feature idea, by Finn
 - Held items wait **120 seconds** (the same as the first-contact timeout).
 - What can be held: text, one file, or a bundle (several files or a folder). The Shortcut unzips a bundle; if unzipping fails on the first try, it saves the zip to Files instead.
 - On the phone: text goes to the clipboard and is shown; a link asks **Open** or **Copy**; a file goes to Save to Files.
-- On the computer: the status line shows `Waiting for <device> to pick up` with **Cancel**; a notification when it's picked up and when it isn't.
+- On the computer: the status line shows `Waiting for <device> to pick up` with **Cancel**; a notification when it's picked up and when it isn't (and `Couldn't send to <device>` when it fails).
 - The Shortcuts are authored as files in the repo and signed on the Mac; if that fails on the first try, they become a written recipe Finn builds by hand.
 - The server deploys the hub as a Docker stack under `svc`, on the host network, listening only on its tailnet IPv4, with the Tailscale socket and CLI mounted. The hub replaces the test peer on the server; Verify uses the laptop and the Mac as the two computers.
 - One branch, `feat/ios-shortcuts-E`. Order: **laptop → server → Mac**. The laptop writes Core, the hub (code, tests, Dockerfile and compose) and the Windows app; a session on the server only deploys; the Mac writes TailshareCore, the Mac app and the Shortcuts, which need the live hub to test against.
@@ -55,7 +69,7 @@ A hub answers `200 {"app":"tailshare","protocol":1,"hub":true}`. Apps answer as 
 ```
 - `bytes` may be omitted (or null). Then the upload has no declared length: the receiver takes the body as it arrives, with or without `Content-Length` (chunked included), until it ends. When `bytes` is present, A's rule stands: `Content-Length` must equal it, or `400`.
 - For `text`, `totalSize` may be omitted too (treated as 0, and the first-contact prompt says `text` as before). For `file` and `bundle` it stays required.
-- `sizeIsEstimate` (optional, default false): `totalSize` is the sender's best guess. Shown the same way. For a `bundle`, the extraction cap becomes `totalSize × 1.25 + 1 MiB` instead of `totalSize`.
+- `sizeIsEstimate` (optional, default false): `totalSize` is the sender's best guess. Shown the same way. For a `bundle`, the extraction cap becomes `totalSize × 1.25 + 1 MiB` (rounded down: `totalSize + totalSize / 4 + 1 MiB` in integers) instead of `totalSize`.
 - The text limit (1 MiB) still applies. With `bytes` present, it's checked at offer time as before (`413`). Without it, the upload stops and fails with `413` once the body passes 1 MiB, and nothing is kept.
 - The big-transfer progress notification (over 20 MB) uses `bytes`, or `totalSize` when `bytes` is absent, as its total.
 
@@ -63,10 +77,10 @@ The apps' own senders keep sending `bytes` and never set `sizeIsEstimate`.
 
 ### Pickup (served by the Windows and Mac apps)
 A computer holds an item for one device, identified by its `StableID` (from the hub's list), for **120 seconds** from when the send starts. Holding happens in the app's receiver process.
-- `GET /v1/pickup` → `200 [{"token":"…","kind":"text"|"file"|"bundle","name":"…","bytes":123}]`: every item held for the caller, oldest first; `[]` when there are none. `name` is absent for `text`. Never lists items held for anyone else.
-- `GET /v1/pickup/{token}` → the item's body: UTF-8 text (`text/plain; charset=utf-8`), the file, or the bundle's zip (`application/octet-stream` with `Content-Disposition: attachment; filename="<name>"`, `<name>.zip` for a bundle). The token must exist, be unexpired, and belong to the caller; anything else → `403`. The token is consumed when the download starts; a download that started before the 120 seconds ran out runs to the end.
+- `GET /v1/pickup` → `200 [{"token":"…","kind":"text"|"file"|"bundle","name":"…","bytes":123}]`: every item held for the caller that is still waiting (not one being downloaded), oldest first; `[]` when there are none. `name` is absent for `text`; for a bundle it is the bundle's own name, without `.zip`. Never lists items held for anyone else.
+- `GET /v1/pickup/{token}` → the item's body: UTF-8 text (`text/plain; charset=utf-8`), the file, or the bundle's zip (`application/octet-stream` with `Content-Disposition: attachment; filename="<name>"`, `<name>.zip` for a bundle; a name that isn't ASCII is also given as `filename*=UTF-8''<percent-encoded>`, with `_` for each such character in `filename`). The token must exist, be unexpired, and belong to the caller; anything else → `403`. The token is consumed when the download starts; a download that started before the 120 seconds ran out runs to the end.
 - **Token**: 128 random bits from a cryptographic RNG, base64url, bound to the target's `StableID`, single use, dies with the hold.
-- **What's held**: text in memory; a single file by its path, read when it's picked up (if it's gone by then, the download fails and the sender sees `Failed`); a bundle is zipped to a temp file when the send starts (`Preparing`), and the temp file is deleted when the hold ends, however it ends.
+- **What's held**: text in memory; a single file by its path, read when it's picked up (if it's gone by then, the download answers `404` and the sender sees `Failed`); a bundle is zipped to a temp file when the send starts (`Preparing`), and the temp file is deleted when the hold ends, however it ends.
 - A hold ends when it's picked up, cancelled, after 120 seconds, or when the app quits. Nothing is held across a restart.
 - There is no trust check on pickup: the computer's user chose the target, and only that device can fetch.
 

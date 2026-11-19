@@ -78,7 +78,9 @@ Known going in:
 
 ## E — iPhone and iPad through Shortcuts, with a hub
 
-**Specced → `docs/specs/ios-shortcuts-E.md`** (planning; not landed). Implemented in three places on one branch: the laptop (Core, the hub, the Windows app), a session on the home server (deploying the hub), then the Mac (the Mac app and the Shortcuts).
+**Specced → `docs/specs/ios-shortcuts-E.md`** (not landed). Implemented in three places on one branch: the laptop (Core, the hub, the Windows app), a session on the home server (deploying the hub), then the Mac (the Mac app and the Shortcuts).
+
+**Progress:** the laptop's part is implemented (2026-11-18: Core's protocol additions and pickup store, the hub and its deploy files, the Windows app). Still to do, in order: the server deploy session, then the Mac's Implement (TailshareCore, the Mac app, the Shortcuts), then Verify, which also runs B's. The spec's *Where the implementation departed* list is the thing the other two sessions read first.
 
 Two Shortcuts let an iPhone or iPad send to any tailshare computer from the share sheet and pull items a computer is holding for it, across Tailscale accounts. A hub on the always-on home server keeps a registry of phones and iPads (each registers on its first Shortcut run) so every computer can offer them as targets. E's Verify also runs B's, which never had one.
 
