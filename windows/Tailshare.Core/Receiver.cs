@@ -406,7 +406,7 @@ public sealed class Receiver : IAsyncDisposable
 
     // Header values must be ASCII, and a name with a quote in it would end the value early. The
     // fallback has neither; filename* carries the real name for clients that read it.
-    private static string ContentDisposition(string name)
+    internal static string ContentDisposition(string name)
     {
         var safe = Names.Sanitize(name);
         var ascii = new string(safe.Select(c => c is >= ' ' and <= '~' ? c : '_').ToArray());

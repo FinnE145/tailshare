@@ -20,9 +20,11 @@ internal sealed class HubRig : IAsyncDisposable
 
     private HubRig() => Registry = new RegistryStore(_dir.Combine("data", "registry.json"));
 
-    public static async Task<HubRig> StartAsync(TimeSpan? probeInterval = null)
+    /// <param name="beforeStart">Runs before the server starts, for what its first probe must already see.</param>
+    public static async Task<HubRig> StartAsync(TimeSpan? probeInterval = null, Action<HubRig>? beforeStart = null)
     {
         var rig = new HubRig();
+        beforeStart?.Invoke(rig);
         rig.Server = new HubServer(new HubOptions
         {
             Tailscale = rig.Tailscale,
@@ -262,6 +264,39 @@ public class HubTests
         Assert.Equal([new HubComputer("a-laptop", "127.0.0.1")], computers);
     }
 
+    [Fact] // spec GET /v1/devices: the hub probes once before it starts listening, so its first answer already has the computers
+    public async Task The_first_request_is_answered_from_a_probe_made_before_listening()
+    {
+        PeerInfo a = null!;
+        await using var rig = await HubRig.StartAsync(beforeStart: r =>
+        {
+            a = r.Net.Add("c-a", "a-laptop", 1, AppHello);
+            var caller = r.Net.Add("c-me", "me", 7, AppHello);
+            r.Tailscale.Who = caller.Identity;
+            r.Tailscale.Status = Tailnet.Status(a, caller);
+        });
+
+        var computers = HubRig.Parse((await rig.Get("/v1/devices")).Body).Computers;
+
+        Assert.Equal([new HubComputer("a-laptop", "127.0.0.1")], computers);
+    }
+
+    [Fact] // a probe that fails keeps the last list rather than emptying it (HubServer's comment), and says so in the log
+    public async Task A_failed_probe_keeps_the_last_list()
+    {
+        await using var rig = await HubRig.StartAsync();
+        var a = rig.Net.Add("c-a", "a-laptop", 1, AppHello);
+        var caller = rig.Net.Add("c-me", "me", 7, AppHello);
+        rig.Tailscale.Who = caller.Identity;
+        await rig.ShowAsync(a, caller);
+
+        rig.Tailscale.FailNextStatus = 1;
+        await rig.Server.ProbeNowAsync();
+
+        Assert.Equal([new HubComputer("a-laptop", "127.0.0.1")], HubRig.Parse((await rig.Get("/v1/devices")).Body).Computers);
+        lock (rig.Log) Assert.Contains("probe failed: IOException", rig.Log);
+    }
+
     [Fact] // spec GET /v1/devices: Tailscale down means nothing to list, not an error
     public async Task Devices_with_tailscale_down_are_empty()
     {
@@ -378,6 +413,39 @@ public class HubTests
         Assert.Equal(content, File.ReadAllText(path));
     }
 
+    [Fact] // spec Hub: the file is hand-edited; a blank or empty row is skipped, not read as a device, and the rest still count
+    public void Rows_without_an_id_or_a_name_are_skipped()
+    {
+        using var dir = new TempDir();
+        var path = dir.Combine("registry.json");
+        File.WriteAllText(path, """{"devices":[{"id":"","name":"x"},{"id":"a","name":""},null,{"id":"node-phone","name":"pixel"}]}""");
+
+        var loaded = new RegistryStore(path).Load();
+
+        Assert.False(loaded.Malformed);
+        Assert.Equal([new RegistryDevice("node-phone", "pixel")], loaded.Devices);
+    }
+
+    [Fact] // spec Hub (A's settings rule): a file that can't be read is treated like a malformed one, so a register never writes over it
+    public void A_registry_that_cannot_be_read_is_never_written_over()
+    {
+        using var dir = new TempDir();
+        var path = dir.Combine("registry.json");
+        const string content = """{"devices":[{"id":"node-ipad","name":"ipad"}]}""";
+        File.WriteAllText(path, content);
+        var store = new RegistryStore(path);
+
+        bool registered;
+        using (new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.None))
+        {
+            Assert.True(store.Load().Malformed);
+            registered = store.Register(Phone);
+        }
+
+        Assert.False(registered);
+        Assert.Equal(content, File.ReadAllText(path));
+    }
+
     // ---- binding to the tailnet address
 
     [Fact] // spec Hub: listens on the Tailscale address found at runtime, with a re-check that rebinds and stops when Tailscale goes
@@ -414,6 +482,10 @@ public class HubTests
 
         tailscale.Status = TailnetStatus.Disconnected;
         Assert.True(await Wait.Until(() => !Answers("127.0.0.2", second).GetAwaiter().GetResult()));
+        // Stopped because Tailscale went away, not because a start on no address failed: a few re-checks
+        // later there is still no attempt to listen.
+        await Task.Delay(400);
+        lock (log) Assert.DoesNotContain(log, l => l.StartsWith("can't listen"));
 
         stop.Cancel();
         await running.WaitAsync(TimeSpan.FromSeconds(5));

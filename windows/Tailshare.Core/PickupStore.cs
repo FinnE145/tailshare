@@ -124,6 +124,9 @@ public sealed class PickupStore
 
     internal void Remove(string token) => _items.TryRemove(token, out _);
 
+    /// <summary>Items still in the store, however they stand; for tests, since an ended item must not linger (a held text would stay in memory).</summary>
+    internal int HeldCount => _items.Count;
+
     private static string NewToken() =>
         Convert.ToBase64String(RandomNumberGenerator.GetBytes(16)).TrimEnd('=').Replace('+', '-').Replace('/', '_');
 }

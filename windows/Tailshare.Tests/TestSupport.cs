@@ -42,7 +42,18 @@ internal sealed class FakeTailscale : ITailscale
     /// <summary>What status reports; tests that need peers set it.</summary>
     public TailnetStatus Status { get; set; } = TailnetStatus.Disconnected;
 
-    public Task<TailnetStatus> GetStatusAsync(CancellationToken ct) => Task.FromResult(Status);
+    /// <summary>How many of the next status calls throw, as a broken Tailscale CLI would.</summary>
+    public int FailNextStatus { get; set; }
+
+    public Task<TailnetStatus> GetStatusAsync(CancellationToken ct)
+    {
+        if (FailNextStatus > 0)
+        {
+            FailNextStatus--;
+            throw new IOException("status failed");
+        }
+        return Task.FromResult(Status);
+    }
 
     public Task<Identity?> WhoisAsync(IPAddress ip, CancellationToken ct) => Task.FromResult(Who);
 }

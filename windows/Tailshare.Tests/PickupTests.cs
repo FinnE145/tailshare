@@ -141,6 +141,8 @@ public class PickupTests
         Assert.Null(r.Content.Headers.ContentDisposition);
         Assert.Equal(HoldOutcome.PickedUp, await Ended(hold));
         Assert.Empty(await List(rig));
+        // spec Pickup: the token dies with the hold; the item, text and all, is out of the store, not just unlisted
+        Assert.Equal(0, rig.Pickups.HeldCount);
     }
 
     [Fact] // spec Pickup: a file is served byte for byte as an attachment under its name; progress ends at the full size
@@ -173,6 +175,14 @@ public class PickupTests
 
         Assert.Equal("""attachment; filename="_.txt"; filename*=UTF-8''%C3%A9.txt""", string.Join("", r.Content.Headers.GetValues("Content-Disposition")));
         await Ended(hold);
+    }
+
+    [Theory] // spec Pickup + departures: names go through the received-name sanitizing first, so a quote can't end the header value early (a Linux file name may hold one; Windows can't make one to hold)
+    [InlineData("a\"b.txt", "attachment; filename=\"a_b.txt\"")]
+    [InlineData("tab\there.txt", "attachment; filename=\"tab_here.txt\"")]
+    public void A_quote_or_control_character_in_the_name_becomes_an_underscore(string name, string expected)
+    {
+        Assert.Equal(expected, Receiver.ContentDisposition(name));
     }
 
     [Fact] // spec Pickup: a bundle is zipped when the send starts and served as <name>.zip; its temp zip is gone afterwards
@@ -303,6 +313,7 @@ public class PickupTests
         using var r = await Download(rig, token);
         Assert.Equal(HttpStatusCode.Forbidden, r.StatusCode);
         Assert.Empty(await List(rig));
+        Assert.Equal(0, rig.Pickups.HeldCount);
     }
 
     [Fact] // spec Pickup: a bundle's temp zip is deleted when the hold expires
@@ -335,6 +346,7 @@ public class PickupTests
         using var r = await Download(rig, token);
         Assert.Equal(HttpStatusCode.Forbidden, r.StatusCode);
         Assert.Empty(Directory.GetFiles(rig.HoldTemp));
+        Assert.Equal(0, rig.Pickups.HeldCount);
     }
 
     [Fact] // spec Pickup: a hold ends when the app quits; CancelAll ends them all and removes their temp files
