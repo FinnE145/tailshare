@@ -71,12 +71,17 @@ public sealed class Sender : IDisposable
         return new(computers, mobiles.Where(m => computers.All(c => c.Identity.Id != m.Id)).ToList());
     }
 
-    private static PeerInfo? FindConfiguredHub(TailnetStatus status, string setting)
+    internal static PeerInfo? FindConfiguredHub(TailnetStatus status, string setting)
     {
         if (System.Net.IPAddress.TryParse(setting, out var ip))
         {
             // An address needs no lookup, so it works for a hub Tailscale lists under another name too.
-            return status.Peers.FirstOrDefault(p => p.Ip.Equals(ip)) ?? new PeerInfo(new Identity("", setting), ip, true);
+            // Only a tailnet address, though: a hand-edited setting must never turn the refresh into a
+            // request to an arbitrary host (the Mac app has the same rule). A peer's own address is
+            // always one; that branch is also how the tests' loopback hubs are reached.
+            var peer = status.Peers.FirstOrDefault(p => p.Ip.Equals(ip));
+            if (peer is not null) return peer;
+            return TailscaleJson.IsTailnetIPv4(ip) ? new PeerInfo(new Identity("", setting), ip, true) : null;
         }
         return status.Peers.FirstOrDefault(p => p.Online && p.Identity.Name.Equals(setting, StringComparison.OrdinalIgnoreCase));
     }
@@ -87,7 +92,7 @@ public sealed class Sender : IDisposable
         timeout.CancelAfter(DevicesTimeout);
         try
         {
-            var devices =await _http.GetFromJsonAsync<HubDevices>(Url(hub, "/v1/devices"), Protocol.Json, timeout.Token);
+            var devices = await _http.GetFromJsonAsync<HubDevices>(Url(hub, "/v1/devices"), Protocol.Json, timeout.Token);
             return (devices?.Mobiles ?? []).Where(m => m is not null && !string.IsNullOrEmpty(m.Id) && !string.IsNullOrEmpty(m.Name)).ToList();
         }
         catch (Exception ex) when (ex is HttpRequestException or OperationCanceledException or System.Text.Json.JsonException or NotSupportedException)

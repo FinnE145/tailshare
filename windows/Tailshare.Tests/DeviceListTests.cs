@@ -39,11 +39,11 @@ public class DeviceListTests
         Assert.Equal([new Identity("m1", "pixel"), new Identity("m2", "ipad")], list.Mobiles);
     }
 
-    [Fact] // spec Apps/Refresh: several hubs and no setting, the first by name (status order is the opposite here)
+    [Fact] // spec Apps/Refresh: several hubs and no setting, the first by name (status order is the opposite here; "B" sorts before "a" if case counted)
     public async Task With_several_hubs_the_first_by_name_is_used()
     {
         using var net = new Tailnet();
-        var b = net.Add("hb", "b-hub", 1, HubHello, Mobiles(("mb", "from-b")));
+        var b = net.Add("hb", "B-hub", 1, HubHello, Mobiles(("mb", "from-b")));
         var a = net.Add("ha", "a-hub", 2, HubHello, Mobiles(("ma", "from-a")));
         using var sender = net.Sender();
 
@@ -81,8 +81,33 @@ public class DeviceListTests
         Assert.Equal([new Identity("mb", "from-b")], list.Mobiles);
     }
 
-    [Fact] // spec Apps/Refresh: an address needs no lookup, so a hub missing from Tailscale's peer list still works
-    public async Task A_hub_set_by_an_address_tailscale_does_not_list_is_used()
+    [Theory] // spec Apps/Refresh: hub is a Tailscale IPv4, which needs no lookup, so one missing from Tailscale's peer list is still used
+    [InlineData("100.64.9.9")]
+    [InlineData("100.127.255.254")]
+    public void A_tailnet_address_tailscale_does_not_list_is_used(string setting)
+    {
+        var listed = new PeerInfo(new Identity("c1", "desk"), IPAddress.Parse("100.64.0.2"), true);
+
+        var hub = Sender.FindConfiguredHub(Tailnet.Status(listed), setting);
+
+        Assert.Equal(IPAddress.Parse(setting), hub?.Ip);
+    }
+
+    [Theory] // spec Apps/Refresh + Verify E (Finn, 2026-11-19): an address outside the tailnet is never asked, like the Mac app
+    [InlineData("8.8.8.8")]
+    [InlineData("192.168.1.10")]
+    [InlineData("100.128.0.1")]
+    [InlineData("100.63.255.255")]
+    [InlineData("fd7a:115c::5")]
+    public void An_address_outside_the_tailnet_is_not_used(string setting)
+    {
+        var listed = new PeerInfo(new Identity("c1", "desk"), IPAddress.Parse("100.64.0.2"), true);
+
+        Assert.Null(Sender.FindConfiguredHub(Tailnet.Status(listed), setting));
+    }
+
+    [Fact] // spec Apps/Refresh + Verify E: an unlisted address outside the tailnet gives no phones, even though a hub answers there
+    public async Task A_hub_set_by_an_unlisted_non_tailnet_address_gives_no_mobiles()
     {
         using var net = new Tailnet();
         var computer = net.Add("c1", "desk", 1, AppHello);
@@ -91,7 +116,7 @@ public class DeviceListTests
 
         var list = await sender.DiscoverDevicesAsync(Tailnet.Status(computer), "127.0.0.2", CancellationToken.None);
 
-        Assert.Equal([new Identity("mb", "from-b")], list.Mobiles);
+        Assert.Empty(list.Mobiles);
         Assert.Equal([computer], list.Computers);
     }
 
@@ -138,7 +163,7 @@ public class DeviceListTests
         Assert.Empty(list.Mobiles);
     }
 
-    [Fact] // the hub probes its peers before answering /v1/devices, so the wait for it is longer than a hello's; a hello-length wait lost the phones whenever one computer was off
+    [Fact] // spec Apps/Refresh: the wait for the hub is 5 s, longer than a hello's; a hello-length wait lost the phones whenever one computer was off (when the hub still probed inside the request)
     public async Task A_hub_slower_than_a_hello_timeout_still_gives_its_mobiles()
     {
         using var net = new Tailnet();
