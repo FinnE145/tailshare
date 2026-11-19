@@ -27,3 +27,6 @@ Thumbs.db
 
 # Claude Code per-machine settings
 .claude/settings.local.json
+
+# Signed Shortcuts: the signature can carry the signer's Apple ID
+shortcuts/signed/
