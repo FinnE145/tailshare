@@ -75,7 +75,7 @@ internal sealed class Notifier(DispatcherQueue ui) : IReceiverHost
     }
 
     public IIncomingTransfer BeginIncoming(Identity from, Offer offer) =>
-        offer.Bytes > Notices.ProgressThresholdBytes ? new ProgressTransfer(this, from, offer) : new QuietTransfer();
+        offer.ExpectedBytes > Notices.ProgressThresholdBytes ? new ProgressTransfer(this, from, offer) : new QuietTransfer();
 
     public void Received(Identity from, Offer offer, ReceivedItem item)
     {
@@ -178,7 +178,7 @@ internal sealed class Notifier(DispatcherQueue ui) : IReceiverHost
         public ProgressTransfer(Notifier owner, Identity from, Offer offer)
         {
             _owner = owner;
-            _total = offer.Bytes;
+            _total = offer.ExpectedBytes;
             owner._cancels[_id] = _cts.Cancel;
 
             var notification = new AppNotificationBuilder()

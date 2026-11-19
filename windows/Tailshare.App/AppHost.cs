@@ -34,6 +34,9 @@ internal sealed class AppHost
 
     public SettingsStore Settings { get; }
     public Notifier Notifier { get; }
+
+    /// <summary>What is held for phones. Owned here, not by the receiver, so a rebind of the receiver doesn't drop a hold.</summary>
+    public PickupStore Pickups { get; } = new();
     public ITailscale Tailscale => _tailscale;
     public TailnetStatus Status { get; private set; } = TailnetStatus.Disconnected;
 
@@ -82,6 +85,8 @@ internal sealed class AppHost
         _tray?.Dispose();
         Notifier.Unregister();
         _popup?.AllowClose();
+        // Nothing is held across a quit, and a held bundle's temp zip must not outlive the app.
+        Pickups.CancelAll();
         _receiver?.DisposeAsync().AsTask().Wait(TimeSpan.FromSeconds(2));
         Application.Current.Exit();
     }
@@ -153,6 +158,7 @@ internal sealed class AppHost
             Tailscale = _tailscale,
             Host = Notifier,
             DefaultReceiveFolder = UserDataPaths.GetDefault().Downloads,
+            Pickups = Pickups,
         });
         try
         {

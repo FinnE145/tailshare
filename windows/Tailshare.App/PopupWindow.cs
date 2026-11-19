@@ -162,7 +162,8 @@ internal sealed class PopupWindow : Window
         var to = _devices.Selected;
         var content = CurrentContent();
         if (to is null || content is null) return;
-        await _send.SendAsync(to, content);
+        if (to.Computer is { } computer) await _send.SendAsync(computer, content);
+        else await _send.HoldAsync(to.Identity, content);
         UpdateSendEnabled();
     }
 
@@ -172,7 +173,7 @@ internal sealed class PopupWindow : Window
         _progress.Visibility = s.Busy || s.Fraction is not null ? Visibility.Visible : Visibility.Collapsed;
         _progress.IsIndeterminate = s.Busy && s.Fraction is null;
         if (s.Fraction is { } f) _progress.Value = f * 100;
-        _cancelButton.Visibility = s.Busy ? Visibility.Visible : Visibility.Collapsed;
+        _cancelButton.Visibility = s.Cancellable ? Visibility.Visible : Visibility.Collapsed;
         _sendButton.IsEnabled = !s.Busy && _devices.Selected is not null && CurrentContent() is not null;
     }
 }

@@ -20,6 +20,8 @@ internal sealed class ShareWindow : Window
     private readonly ProgressBar _progress = new() { Visibility = Visibility.Collapsed };
     private SendContent? _content;
     private bool _reported;
+    private bool _sent;
+    private bool _closed;
 
     public ShareWindow(AppHost host, ShareOperation operation)
     {
@@ -41,7 +43,7 @@ internal sealed class ShareWindow : Window
         _sendButton.Click += async (_, _) => await SendAsync();
         _cancelButton.Click += (_, _) => _send.Cancel();
         _send.Changed += OnStatus;
-        Closed += (_, _) => ReportCompleted();
+        Closed += (_, _) => { _closed = true; ReportCompleted(); };
 
         // On top: the share sheet hands over to this window and it must not fall behind the app shared from.
         WindowHelper.Configure(this, 400, 420, bottomRight: false, alwaysOnTop: true);
@@ -90,27 +92,38 @@ internal sealed class ShareWindow : Window
     }
 
     private void UpdateSendEnabled() =>
-        _sendButton.IsEnabled = !_send.Busy && _devices.Selected is not null && _content is not null;
+        _sendButton.IsEnabled = !_sent && !_send.Busy && _devices.Selected is not null && _content is not null;
 
     private async Task SendAsync()
     {
         var to = _devices.Selected;
         if (to is null || _content is null) return;
 
-        var outcome = await _send.SendAsync(to, _content);
-        // The result is a notification, and the window is done.
-        _host.Notifier.Show("tailshare", SendController.ShareResultText(outcome, to.Identity.Name));
-        Close();
+        // One send per share window, even while a hold for a phone is only waiting.
+        _sent = true;
+        UpdateSendEnabled();
+        if (to.Computer is { } computer)
+        {
+            var outcome = await _send.SendAsync(computer, _content);
+            // The result is a notification, and the window is done.
+            _host.Notifier.Show("tailshare", SendController.ShareResultText(outcome, to.Identity.Name));
+        }
+        else
+        {
+            // The controller raises the hold's notification itself: this window may be gone before it ends.
+            await _send.HoldAsync(to.Identity, _content);
+        }
+        if (!_closed) Close();
     }
 
     private void OnStatus(SendStatus s)
     {
         _status.Text = s.Text;
-        _progress.Visibility = s.Busy ? Visibility.Visible : Visibility.Collapsed;
+        _progress.Visibility = s.Busy || s.Fraction is not null ? Visibility.Visible : Visibility.Collapsed;
         _progress.IsIndeterminate = s.Busy && s.Fraction is null;
         if (s.Fraction is { } f) _progress.Value = f * 100;
-        _cancelButton.Visibility = s.Busy ? Visibility.Visible : Visibility.Collapsed;
-        _sendButton.IsEnabled = !s.Busy && _devices.Selected is not null && _content is not null;
+        _cancelButton.Visibility = s.Cancellable ? Visibility.Visible : Visibility.Collapsed;
+        UpdateSendEnabled();
     }
 
     private void ReportCompleted()

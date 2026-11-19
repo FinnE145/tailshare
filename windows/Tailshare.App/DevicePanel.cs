@@ -1,5 +1,6 @@
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
+using Microsoft.UI.Xaml.Media;
 using Tailshare.Core;
 
 namespace Tailshare.App;
@@ -7,11 +8,8 @@ namespace Tailshare.App;
 /// <summary>The device list with its Refresh button, shared by the tray popup and the share window.</summary>
 internal sealed class DevicePanel : StackPanel
 {
-    private sealed record DeviceItem(PeerInfo Peer)
-    {
-        // ListView shows ToString() for an item with no template.
-        public override string ToString() => Peer.Identity.Name;
-    }
+    // Segoe Fluent Icons "CellPhone".
+    private const string PhoneGlyph = "";
 
     private readonly AppHost _host;
     private readonly ListView _list = new() { SelectionMode = ListViewSelectionMode.Single, MaxHeight = 150 };
@@ -42,7 +40,16 @@ internal sealed class DevicePanel : StackPanel
         _refresh.Click += async (_, _) => await RefreshAsync();
     }
 
-    public PeerInfo? Selected => (_list.SelectedItem as DeviceItem)?.Peer;
+    public Target? Selected => (_list.SelectedItem as ListViewItem)?.Tag as Target;
+
+    // A phone or iPad carries an icon beside its name: the row is otherwise the same as a computer's.
+    private static ListViewItem MakeItem(Target target)
+    {
+        var row = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8 };
+        if (target.IsMobile) row.Children.Add(new FontIcon { Glyph = PhoneGlyph, FontFamily = new FontFamily("Segoe Fluent Icons") });
+        row.Children.Add(new TextBlock { Text = target.Identity.Name });
+        return new ListViewItem { Content = row, Tag = target };
+    }
 
     public async Task RefreshAsync()
     {
@@ -53,18 +60,23 @@ internal sealed class DevicePanel : StackPanel
         try
         {
             var status = await _host.PollOnceAsync();
-            IReadOnlyList<PeerInfo> found = [];
+            var found = new DeviceList([], []);
             if (status.Connected)
             {
                 using var sender = new Sender(_host.Port);
-                found = await sender.DiscoverAsync(status, CancellationToken.None);
+                // Read fresh, so a hand edit of the hub setting applies at the next refresh.
+                found = await sender.DiscoverDevicesAsync(status, _host.Settings.Load().Value.EffectiveHub, CancellationToken.None);
             }
 
-            _list.Items.Clear();
-            foreach (var peer in found) _list.Items.Add(new DeviceItem(peer));
-            _list.SelectedItem = _list.Items.OfType<DeviceItem>().FirstOrDefault(d => d.Peer.Identity.Id == keep);
+            var targets = found.Computers.Select(c => new Target(c.Identity, c))
+                .Concat(found.Mobiles.Select(m => new Target(m, null)))
+                .ToList();
 
-            _state.Text = !status.Connected ? "Tailscale not connected" : found.Count == 0 ? "No devices" : "";
+            _list.Items.Clear();
+            foreach (var target in targets) _list.Items.Add(MakeItem(target));
+            _list.SelectedItem = _list.Items.OfType<ListViewItem>().FirstOrDefault(i => ((Target)i.Tag).Identity.Id == keep);
+
+            _state.Text = !status.Connected ? "Tailscale not connected" : targets.Count == 0 ? "No devices" : "";
             _state.Visibility = _state.Text.Length == 0 ? Visibility.Collapsed : Visibility.Visible;
         }
         finally
