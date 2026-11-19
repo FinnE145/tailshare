@@ -16,6 +16,7 @@ What each spec in `docs/specs/` actually covers, and the code it's authoritative
 |---|---|---|---|
 | `docs/specs/windows-app-A.md` | Wire protocol v1, the Windows app, the test peer | `windows/` | A |
 | `docs/specs/mac-app-B.md` | The Mac menu-bar app and Share Extension (protocol v1 from A) | `mac/` | B |
+| `docs/specs/ios-shortcuts-E.md` | Protocol v1 additions (optional `bytes`, estimated size, hub mark, pickup), the hub, pickup targets in both apps, the iPhone/iPad Shortcuts | `windows/Tailshare.Hub/`, both Cores and apps, `shortcuts/` | E |
 
 ---
 
@@ -42,13 +43,15 @@ Measurements a later session should trust rather than re-derive — each under a
 ## Order
 
 ```
-A (protocol + Windows app) -> B (Mac app)
+A (protocol + Windows app) -> B (Mac app) -> E (iPhone/iPad Shortcuts and the hub)
 C (visual identity and assets) -> D (Windows UI restyle)
 ```
 
-**A has landed** — wire protocol v1, the Windows app and the test peer. <!-- Verify keeps this line current: "A, B and C have landed — …" -->
+**A has landed** — wire protocol v1, the Windows app and the test peer. **B is implemented and merged into `main` but not verified** (no `/flow verify` has run for it yet, Finn, 2026-11-18). <!-- Verify keeps this line current: "A, B and C have landed — …" -->
 
 B builds against A's wire protocol, which A's spec defines and A's test peer exercises, so A comes first.
+
+E comes next, before C and D (Finn, 2026-11-18): it changes both apps and the protocol, and its Verify also runs B's.
 
 C and D follow A and B. D takes its colour and icons from C, so C comes first; neither touches the wire protocol.
 
@@ -63,7 +66,7 @@ The wire protocol every tailshare app speaks, the Windows tray app (share target
 
 ## B — Mac app
 
-**Specced → `docs/specs/mac-app-B.md`** (planning; not landed). Implemented and verified on the Mac (`mac/` is the Mac checkout's).
+**Specced → `docs/specs/mac-app-B.md`.** Implemented and merged into `main`, **not verified yet**: its `/flow verify` is still to run, on the Mac (`mac/` is the Mac checkout's).
 
 A menu-bar app plus a Share Extension with the same behaviour as A's Windows app: register in the share sheet, send text or files to a tailshare device, receive into the receive folder (Downloads by default), notify on receive (click opens the folder for files, copies text, opens links with a Copy action), and ask before trusting a new device. It implements A's wire protocol v1 as written in A's spec, and the settings file's shape.
 
@@ -72,6 +75,12 @@ Known going in:
 - A Share Extension is always sandboxed; it likely hands the send to the main app (an app group) rather than doing network I/O itself.
 - The Mac's Tailscale CLI location depends on which Tailscale build is installed (App Store or standalone); `tailscale status`/`whois` are what A uses.
 - The protocol's offer-then-upload shape was chosen partly so a plain `URLSession` client works (no `Expect: 100-continue`).
+
+## E — iPhone and iPad through Shortcuts, with a hub
+
+**Specced → `docs/specs/ios-shortcuts-E.md`** (planning; not landed). Implemented in three places on one branch: the laptop (Core, the hub, the Windows app), a session on the home server (deploying the hub), then the Mac (the Mac app and the Shortcuts).
+
+Two Shortcuts let an iPhone or iPad send to any tailshare computer from the share sheet and pull items a computer is holding for it, across Tailscale accounts. A hub on the always-on home server keeps a registry of phones and iPads (each registers on its first Shortcut run) so every computer can offer them as targets. E's Verify also runs B's, which never had one.
 
 ## C — Visual identity and assets
 
