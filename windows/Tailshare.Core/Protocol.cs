@@ -50,6 +50,10 @@ public static class Protocol
     public const string AppName = "tailshare";
 
     public static readonly TimeSpan HelloTimeout = TimeSpan.FromSeconds(2);
+    // The hub answers /v1/devices only after probing every peer, and one that doesn't answer costs it
+    // a whole HelloTimeout. An app that waited just HelloTimeout lost every phone whenever a single
+    // computer was off (found 2026-11-19: the Mac app was quit, the Windows list had no phones).
+    public static readonly TimeSpan DevicesTimeout = TimeSpan.FromSeconds(5);
     public static readonly TimeSpan OfferTimeout = TimeSpan.FromSeconds(130);
     public static readonly TimeSpan PromptTimeout = TimeSpan.FromSeconds(120);
     public static readonly TimeSpan TokenLifetime = TimeSpan.FromSeconds(60);

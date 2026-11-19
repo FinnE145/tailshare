@@ -124,18 +124,31 @@ public class DeviceListTests
         Assert.Empty(auto.Mobiles);
     }
 
-    [Fact] // spec Apps/Refresh: a hub that doesn't answer within 2 s (short here) costs only the phones
+    [Fact] // spec Apps/Refresh: a hub that doesn't answer in time (short here) costs only the phones
     public async Task A_hub_that_does_not_answer_costs_only_the_mobiles()
     {
         using var net = new Tailnet();
         var computer = net.Add("c1", "desk", 1, AppHello);
         var hub = net.Add("h1", "home-hub", 2, HubHello, devices: null);
-        using var sender = net.Sender(TimeSpan.FromMilliseconds(400));
+        using var sender = net.Sender(TimeSpan.FromMilliseconds(400), TimeSpan.FromMilliseconds(400));
 
         var list = await sender.DiscoverDevicesAsync(Tailnet.Status(computer, hub), null, CancellationToken.None);
 
         Assert.Equal([computer], list.Computers);
         Assert.Empty(list.Mobiles);
+    }
+
+    [Fact] // the hub probes its peers before answering /v1/devices, so the wait for it is longer than a hello's; a hello-length wait lost the phones whenever one computer was off
+    public async Task A_hub_slower_than_a_hello_timeout_still_gives_its_mobiles()
+    {
+        using var net = new Tailnet();
+        var computer = net.Add("c1", "desk", 1, AppHello);
+        var hub = net.Add("h1", "home-hub", 2, HubHello, Mobiles(("m1", "pixel")), devicesDelay: TimeSpan.FromMilliseconds(700));
+        using var sender = net.Sender(TimeSpan.FromMilliseconds(300), TimeSpan.FromSeconds(5));
+
+        var list = await sender.DiscoverDevicesAsync(Tailnet.Status(computer, hub), null, CancellationToken.None);
+
+        Assert.Equal([new Identity("m1", "pixel")], list.Mobiles);
     }
 
     [Theory] // spec Apps/Refresh: an answer that isn't the hub's JSON means no phones, not an exception

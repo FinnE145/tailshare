@@ -194,16 +194,23 @@ internal sealed class Tailnet : IDisposable
 
     /// <param name="hello">The answer to /v1/hello.</param>
     /// <param name="devices">The answer to anything else, or null to never answer it.</param>
-    public PeerInfo Add(string id, string name, int lastOctet, string hello, string? devices = "", bool online = true)
+    /// <param name="devicesDelay">How long the answer to anything but hello is held back (a hub busy probing its peers).</param>
+    public PeerInfo Add(string id, string name, int lastOctet, string hello, string? devices = "", bool online = true, TimeSpan? devicesDelay = null)
     {
         var ip = IPAddress.Parse($"127.0.0.{lastOctet}");
-        _hosts.Add(new HttpListenerHost(path => path == "/v1/hello" ? hello : devices, ip, Port));
+        _hosts.Add(new HttpListenerHost(path =>
+        {
+            if (path == "/v1/hello") return hello;
+            if (devicesDelay is { } d) Thread.Sleep(d);
+            return devices;
+        }, ip, Port));
         return new PeerInfo(new Identity(id, name), ip, online);
     }
 
     public static TailnetStatus Status(params PeerInfo[] peers) => new(true, IPAddress.Parse("100.64.0.1"), peers);
 
-    public Sender Sender(TimeSpan? helloTimeout = null) => new(Port) { HelloTimeout = helloTimeout ?? Protocol.HelloTimeout };
+    public Sender Sender(TimeSpan? helloTimeout = null, TimeSpan? devicesTimeout = null) =>
+        new(Port) { HelloTimeout = helloTimeout ?? Protocol.HelloTimeout, DevicesTimeout = devicesTimeout ?? Protocol.DevicesTimeout };
 
     public void Dispose() { foreach (var h in _hosts) h.Dispose(); }
 }

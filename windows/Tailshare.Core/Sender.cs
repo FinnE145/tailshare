@@ -34,6 +34,7 @@ public sealed class Sender : IDisposable
     // Settable so tests can use short ones.
     public TimeSpan OfferTimeout { get; init; } = Protocol.OfferTimeout;
     public TimeSpan HelloTimeout { get; init; } = Protocol.HelloTimeout;
+    public TimeSpan DevicesTimeout { get; init; } = Protocol.DevicesTimeout;
 
     public Sender(int port = Protocol.DefaultPort)
     {
@@ -83,10 +84,10 @@ public sealed class Sender : IDisposable
     private async Task<IReadOnlyList<Identity>> FetchMobilesAsync(PeerInfo hub, CancellationToken ct)
     {
         using var timeout = CancellationTokenSource.CreateLinkedTokenSource(ct);
-        timeout.CancelAfter(HelloTimeout);
+        timeout.CancelAfter(DevicesTimeout);
         try
         {
-            var devices = await _http.GetFromJsonAsync<HubDevices>(Url(hub, "/v1/devices"), Protocol.Json, timeout.Token);
+            var devices =await _http.GetFromJsonAsync<HubDevices>(Url(hub, "/v1/devices"), Protocol.Json, timeout.Token);
             return (devices?.Mobiles ?? []).Where(m => m is not null && !string.IsNullOrEmpty(m.Id) && !string.IsNullOrEmpty(m.Name)).ToList();
         }
         catch (Exception ex) when (ex is HttpRequestException or OperationCanceledException or System.Text.Json.JsonException or NotSupportedException)

@@ -12,7 +12,7 @@
   <!-- Publisher must equal the subject of the signing certificate (see CLAUDE.md's Commands).
        Bump the last number before every reinstall: Add-AppxPackage refused (0x80073CFB) a package with
        the same version as the installed one but different contents. -->
-  <Identity Name="Tailshare.App" Publisher="CN=Tailshare Dev" Version="1.0.0.5" />
+  <Identity Name="Tailshare.App" Publisher="CN=Tailshare Dev" Version="1.0.0.7" />
 
   <Properties>
     <DisplayName>tailshare</DisplayName>
